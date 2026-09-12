@@ -1,2 +1,2 @@
 # oe-desk
-A knowledge-based platform built on the LLMs, offers a comprehensive suite of out-of-the-box capabilities such as data processing, RAG retrieval, and visual AI workflow orchestration, letting you easily develop and deploy complex question-answering systems without the need for extensive setup or configuration.
+Build and deploy advanced question-answering systems effortlessly with this LLM-powered platform. It eliminates tedious configuration by delivering out-of-the-box data processing, RAG retrieval, and intuitive visual AI workflow orchestration.
