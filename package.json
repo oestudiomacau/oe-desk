@@ -1,0 +1,18 @@
+{
+  "name": "rcb-rag-customer-service",
+  "productName": "OE DESK",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/platform-preload.cjs && node --check rpa/xianyu-bridge.user.js",
+    "electron": "electron electron/main.cjs"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7"
+  }
+}

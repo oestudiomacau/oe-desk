@@ -1,0 +1,17 @@
+# Local credentials and machine-generated runtime state.
+.env
+.env.*
+!.env.example
+node_modules/
+data/
+tmp/
+
+# Operator-owned material. A clean clone starts without product knowledge,
+# imported files, saved prompts, skills, bridge history, or local work notes.
+knowledge-base/
+File/
+experiments/
+*_PROMPT.md
+
+# An unrelated application bundled in the working directory.
+basjoo/
