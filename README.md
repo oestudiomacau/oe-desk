@@ -1,4 +1,4 @@
-#RAG Customer Service
+# RAG Customer Service
 
 This project serves the customer-service UI and a local RAG API.
 
