@@ -5,6 +5,14 @@ This project serves the customer-service UI and a local RAG API.
 ## What It Does
 
 1. Loads `knowledge-base/products/*.md` and `knowledge-base/product-catalog.csv`.
+=======
+# RCB RAG Customer Service
+
+This project serves the RCB customer-service UI and a local RAG API.
+
+## What It Does
+
+1. Loads `knowledge-base/products/*.md` and `knowledge-base/rcb-product-catalog.csv`.
 2. Splits them into retrieval chunks.
 3. Uses embedding similarity plus lexical retrieval when an embedding model is available.
 4. Sends only the top retrieved chunks, the platform, and recent conversation context to the chat model.
