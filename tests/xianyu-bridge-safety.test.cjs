@@ -61,7 +61,7 @@ assert.match(source, /rightThreshold = panel\.left \+ panel\.width \* 0\.62/, 'D
 assert.match(source, /bridgeVersion/, 'Heartbeat diagnostics must expose the bridge version so stale userscripts can be identified.');
 assert.match(serverSource, /!hasIdentity && item\.conversationId === conversationId/, 'Text-only duplicate suppression must not discard distinct keyed messages.');
 
-const sandbox = {};
+const sandbox = { setTimeout, clearTimeout };
 vm.createContext(sandbox);
 vm.runInContext(source, sandbox);
 const ScanState = sandbox.OEDeskConversationScanState;
@@ -86,6 +86,15 @@ const trailingScan = scheduler.request(scan);
 releaseFirstScan();
 await Promise.all([firstScan, trailingScan]);
 assert.equal(scanCalls, 2, 'A pulse arriving during a scan must force one trailing scan instead of being lost.');
+const stalledScheduler = new ScanScheduler(35);
+const stalledOutcome = await Promise.race([
+  stalledScheduler.request(() => new Promise(() => {})).then(() => 'resolved', error => error?.code || 'rejected'),
+  new Promise(resolve => setTimeout(() => resolve('external-timeout'), 120))
+]);
+assert.equal(stalledOutcome, 'SCAN_TIMEOUT', 'A hung platform request must release the scan scheduler without waiting for seller activity.');
+let recoveryScans = 0;
+await stalledScheduler.request(async () => { recoveryScans += 1; });
+assert.equal(recoveryScans, 1, 'The next host pulse must scan normally after a timed-out pass.');
 const scanState = new ScanState();
 scanState.prime('visual:buyer-a');
 scanState.prime('/im');
@@ -98,9 +107,12 @@ assert.equal(scanState.noteEmpty('visual:new-buyer', 3001, 2000), true, 'A genui
 assert.match(source, /if \(currentConversationId && currentConversationId !== `\$\{location\.pathname\}/, 'A transient missing active row must retain the last stable conversation ID.');
 assert.match(source, /globalThis\.__rcbXianyuBridgePulse/, 'Electron must have a host-triggered scan pulse when page timers stall.');
 assert.match(source, /globalThis\.__rcbXianyuBridgePulse = \(\) => \{[\s\S]*requestPlatformScan\('electron-host'\)/, 'The Electron pulse must invoke a scan directly instead of creating a renderer timer.');
+assert.match(source, /error\?\.code === 'SCAN_TIMEOUT'[\s\S]*scanBusy = false;[\s\S]*timeout-recovery/, 'A timed-out scan must release stale locks and schedule an automatic recovery pass.');
+assert.match(source, /const timer = setTimeout\(\(\) => fail\(new Error\('本地服务响应超时'\)\), timeoutMs\)/, 'The bridge must enforce its own request timeout when the Electron GM shim cannot cancel IPC.');
 
 const electronSource = readFileSync(join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
 assert.match(electronSource, /setInterval\(\(\) => \{[\s\S]*__rcbXianyuBridgePulse[\s\S]*\}, 750\)/, 'Electron must trigger bridge scans independently of renderer intervals.');
+assert.match(electronSource, /signal: AbortSignal\.timeout\(12000\)/, 'Electron-to-local-server requests must not hang indefinitely.');
 
 console.log('xianyu bridge safety contract passed');
 }

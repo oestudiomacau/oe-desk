@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/platform-preload.cjs && node --check rpa/xianyu-bridge.user.js",
+    "check": "node --check server.js && node --check server/workflow-engine.js && node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/platform-preload.cjs && node --check rpa/xianyu-bridge.user.js && node --check client/workflow-canvas.js",
     "electron": "electron electron/main.cjs"
   },
   "dependencies": {

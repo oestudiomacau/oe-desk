@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { extname, join, resolve } from 'node:path';
 import { importKnowledgeFiles, listImportedKnowledgeFiles, updateImportedKnowledgeFile, deleteImportedKnowledgeFile } from './server/knowledge-import.js';
 import { coalescePendingXianyuMessages, splitXianyuReplyForDelivery, supersedeQueuedAutoReplies } from './server/xianyu-message-queue.js';
+import { createDefaultWorkflowState, nextWorkflowNode, normalizeWorkflowState, renderWorkflowTemplate, selectXianyuWorkflow, validateExecutableWorkflow } from './server/workflow-engine.js';
 
 const root = process.cwd();
 const envPath = join(root, '.env');
@@ -37,6 +38,7 @@ let vectorIndexPromise = null;
 const localDataDir = process.env.RCB_DATA_DIR || join(root, 'data');
 const xianyuDataPath = join(localDataDir, 'xianyu-messages.json');
 const promptSettingsPath = join(localDataDir, 'prompt-settings.json');
+const workflowConfigPath = join(localDataDir, 'workflow-config.json');
 const xianyuChatUrl = process.env.XIANYU_CHAT_URL || 'https://www.goofish.com/im';
 const defaultPrompt = '你是中文智能客服。只依据检索资料组织自然答复；资料不足时说明缺口并建议人工核验。不要把网络参考当作已核验事实。';
 // Reply modes are deliberately explicit so the UI can switch between a fully
@@ -55,6 +57,9 @@ let xianyuProcessingTail = Promise.resolve();
 const xianyuMessageQuietMs = 1200;
 let promptSettings = { prompt: defaultPrompt, skills: [] };
 let promptSettingsPersisted = false;
+let workflowState = createDefaultWorkflowState();
+let workflowConfigPersisted = false;
+const workflowRuns = [];
 
 function cleanPromptText(value, limit = 5000) {
   return typeof value === 'string' ? value.replace(/\u0000/g, '').trim().slice(0, limit) : '';
@@ -107,6 +112,75 @@ async function savePromptSettings(input) {
   await mkdir(localDataDir, { recursive: true });
   await writeFile(promptSettingsPath, JSON.stringify(promptSettings, null, 2), 'utf8');
   return promptSettingsPayload();
+}
+
+async function loadWorkflowConfig() {
+  try {
+    workflowState = normalizeWorkflowState(JSON.parse(await readFile(workflowConfigPath, 'utf8')));
+    workflowConfigPersisted = true;
+  } catch { /* First run uses the executable built-in customer reply flow. */ }
+}
+
+async function saveWorkflowConfig(input) {
+  workflowState = normalizeWorkflowState(input?.state || input);
+  workflowConfigPersisted = true;
+  await mkdir(localDataDir, { recursive: true });
+  await writeFile(workflowConfigPath, JSON.stringify(workflowState, null, 2), 'utf8');
+  return workflowConfigPayload();
+}
+
+function workflowConfigPayload() {
+  const validations = Object.fromEntries(workflowState.flows.map(flow => [flow.id, validateExecutableWorkflow(flow)]));
+  return { state: workflowState, persisted: workflowConfigPersisted, validations };
+}
+
+function startWorkflowRun(flow, message) {
+  const now = Date.now();
+  const run = {
+    runId: `workflow-run-${now}-${Math.random().toString(36).slice(2, 7)}`,
+    flowId: flow.id,
+    flowName: flow.name,
+    conversationId: message.conversationId,
+    messageId: message.id,
+    status: 'running',
+    currentNodeId: null,
+    currentNodeType: null,
+    steps: [],
+    startedAtMs: now,
+    updatedAtMs: now
+  };
+  workflowRuns.unshift(run);
+  if (workflowRuns.length > 30) workflowRuns.length = 30;
+  return run;
+}
+
+function updateWorkflowRun(run, node, status, error = null) {
+  if (!run || !node) return;
+  const now = Date.now();
+  let step = run.steps.find(item => item.nodeId === node.id);
+  if (!step) {
+    step = { nodeId: node.id, nodeType: node.type, title: node.title, status, startedAtMs: now, updatedAtMs: now };
+    run.steps.push(step);
+  } else {
+    step.status = status;
+    step.updatedAtMs = now;
+  }
+  if (error) step.error = String(error).slice(0, 500);
+  run.currentNodeId = node.id;
+  run.currentNodeType = node.type;
+  run.updatedAtMs = now;
+}
+
+function finishWorkflowRun(run, status = 'completed', error = null) {
+  if (!run) return;
+  run.status = status;
+  run.updatedAtMs = Date.now();
+  run.finishedAtMs = run.updatedAtMs;
+  if (error) run.error = String(error).slice(0, 500);
+}
+
+function workflowRuntimePayload() {
+  return { runs: workflowRuns.map(run => ({ ...run, steps: run.steps.map(step => ({ ...step })) })) };
 }
 
 async function loadXianyuState() {
@@ -208,6 +282,152 @@ function queueXianyuReplies({ conversationId, text, origin, sourceMessageId = nu
   return replies;
 }
 
+function newerInboundXianyuMessage(message) {
+  const messageIndex = xianyuState.messages.indexOf(message);
+  return xianyuState.messages.slice(messageIndex + 1).find(item => item.direction === 'in'
+    && item.conversationId === message.conversationId
+    && ['received', 'processing'].includes(item.status));
+}
+
+async function generateWorkflowAnswer(context, node) {
+  const instruction = String(node?.config?.prompt || node?.config?.system || node?.config?.instructions || '').trim();
+  const question = instruction
+    ? `${context.output || context.message.text}\n\n当前工作流节点指令：${instruction}`
+    : context.output || context.message.text;
+  context.result = await answerQuestion({
+    question,
+    platform: 'xianyu',
+    history: xianyuConversationHistory(context.message.conversationId, context.message.createdAtMs)
+  });
+  context.output = String(context.result.answer || '').trim();
+  context.draft = context.output;
+  context.risk = assessXianyuRisk(context.message.text, context.result);
+  return context.result;
+}
+
+function classifyWorkflowIntent(text) {
+  const value = String(text || '');
+  if (/(退款|退货|保修|换货|订单|地址|物流|发货)/.test(value)) return '订单售后';
+  if (/(适配|能装|车型|年份|孔距|安装|刹车|制动|减震|悬挂)/.test(value)) return '车型适配';
+  if (/(价格|库存|商品|规格|颜色|尺寸|优惠|赠品)/.test(value)) return '商品咨询';
+  return '其他';
+}
+
+async function executeXianyuWorkflow(message) {
+  const flow = selectXianyuWorkflow(workflowState);
+  if (!flow) {
+    const risk = assessXianyuRisk(message.text, {});
+    markXianyuMessage(message, { status: 'needs_human', risk, draft: '', workflowError: '没有已启用且可执行的闲鱼消息工作流。' });
+    await saveXianyuState();
+    return { message, risk, result: null, workflow: null };
+  }
+
+  const trigger = flow.nodes.find(node => node.type === 'trigger');
+  const run = startWorkflowRun(flow, message);
+  const context = {
+    message,
+    result: null,
+    risk: null,
+    draft: '',
+    output: message.text,
+    variables: {},
+    intent: null,
+    replyMode: xianyuState.replyMode
+  };
+  let node = trigger;
+  let visited = 0;
+  try {
+    while (node && visited < 100) {
+      visited += 1;
+      updateWorkflowRun(run, node, 'running');
+
+      if (['rag', 'knowledge', 'llm'].includes(node.type)) {
+        await generateWorkflowAnswer(context, node);
+      } else if (node.type === 'custom') {
+        await generateWorkflowAnswer(context, node);
+      } else if (node.type === 'extract') {
+        const fields = String(node.config?.fields || '').split(/\r?\n|[,，、]/).map(item => item.trim()).filter(Boolean);
+        for (const field of fields) {
+          if (/订单/.test(field)) context.variables[field] = message.text.match(/[A-Za-z0-9-]{8,}/)?.[0] || '';
+          else if (/年份/.test(field)) context.variables[field] = message.text.match(/20\d{2}/)?.[0] || '';
+          else context.variables[field] = '';
+        }
+      } else if (node.type === 'classifier') {
+        context.intent = classifyWorkflowIntent(message.text);
+      } else if (node.type === 'variable') {
+        const name = String(node.config?.name || '').trim();
+        if (name) {
+          const value = renderWorkflowTemplate(node.config?.value, context);
+          if (node.config?.operation === '删除') delete context.variables[name];
+          else if (node.config?.operation === '追加') context.variables[name] = `${context.variables[name] || ''}${value}`;
+          else context.variables[name] = value;
+        }
+      } else if (node.type === 'template') {
+        context.output = renderWorkflowTemplate(node.config?.template, context);
+      } else if (node.type === 'delay') {
+        const multiplier = node.config?.unit === '小时' ? 3600000 : node.config?.unit === '分钟' ? 60000 : 1000;
+        const delayMs = Math.min(30000, Math.max(0, Number(node.config?.duration || 0) * multiplier));
+        if (delayMs) await new Promise(resolveDelay => setTimeout(resolveDelay, delayMs));
+      } else if (node.type === 'condition') {
+        if (!context.result) await generateWorkflowAnswer(context, node);
+        if (!context.risk) context.risk = assessXianyuRisk(message.text, context.result || {});
+      } else if (node.type === 'reply') {
+        if (!context.result) await generateWorkflowAnswer(context, node);
+        const newerInbound = newerInboundXianyuMessage(message);
+        if (newerInbound) {
+          markXianyuMessage(message, { status: 'superseded', handled: true, supersededBy: newerInbound.id, supersededAt: new Date().toISOString(), workflowRunId: run.runId });
+          updateWorkflowRun(run, node, 'completed');
+          finishWorkflowRun(run, 'superseded');
+          await saveXianyuState();
+          scheduleXianyuConversationProcessing(message.conversationId, 0);
+          return { message, superseded: true, result: null, workflow: run };
+        }
+        const suffix = renderWorkflowTemplate(node.config?.template, context).trim();
+        const draft = [context.draft || context.result?.answer, suffix].filter(Boolean).join('\n').trim();
+        const risk = context.risk || assessXianyuRisk(message.text, context.result || {});
+        const mode = String(node.config?.mode || '人工确认后发送');
+        const shouldQueue = Boolean(draft) && mode !== '仅保存草稿'
+          && (mode === 'AI 全托管队列' || xianyuState.replyMode === 'full_auto' || (xianyuState.autoReply && risk.level === 'low'));
+        if (shouldQueue) {
+          const replies = queueXianyuReplies({ conversationId: message.conversationId, text: draft, origin: 'auto', sourceMessageId: message.id, splitOnMarker: true });
+          markXianyuMessage(message, { status: 'auto_queued', risk, trace: context.result?.trace, sources: context.result?.sources, replyId: replies[0]?.id, replyIds: replies.map(item => item.id), draft, workflowRunId: run.runId, workflowFlowId: flow.id });
+          updateWorkflowRun(run, node, 'completed');
+          finishWorkflowRun(run);
+          await saveXianyuState();
+          return { message, reply: replies[0], replies, risk, result: context.result, workflow: run };
+        }
+        markXianyuMessage(message, { status: 'needs_human', risk, trace: context.result?.trace, sources: context.result?.sources, draft, workflowRunId: run.runId, workflowFlowId: flow.id });
+        updateWorkflowRun(run, node, 'completed');
+        finishWorkflowRun(run);
+        await saveXianyuState();
+        return { message, risk, result: context.result, workflow: run };
+      } else if (node.type === 'handoff') {
+        const risk = context.risk || assessXianyuRisk(message.text, context.result || {});
+        markXianyuMessage(message, { status: 'needs_human', risk, trace: context.result?.trace, sources: context.result?.sources, draft: context.draft, handoffQueue: node.config?.queue || '人工确认', handoffNote: node.config?.note || '', workflowRunId: run.runId, workflowFlowId: flow.id });
+        updateWorkflowRun(run, node, 'completed');
+        finishWorkflowRun(run);
+        await saveXianyuState();
+        return { message, risk, result: context.result, workflow: run };
+      } else if (node.type === 'stop') {
+        markXianyuMessage(message, { status: 'handled', handled: true, workflowStopReason: node.config?.reason || '', workflowRunId: run.runId, workflowFlowId: flow.id });
+        updateWorkflowRun(run, node, 'completed');
+        finishWorkflowRun(run);
+        await saveXianyuState();
+        return { message, result: context.result, workflow: run };
+      }
+
+      updateWorkflowRun(run, node, 'completed');
+      node = nextWorkflowNode(flow, node, context);
+    }
+
+    throw new Error(visited >= 100 ? '工作流执行步数超过安全上限。' : '工作流没有到达回复、转人工或结束节点。');
+  } catch (error) {
+    if (node) updateWorkflowRun(run, node, 'error', error.message);
+    finishWorkflowRun(run, 'error', error.message);
+    throw error;
+  }
+}
+
 async function processXianyuMessage(message) {
   if (!message || message.direction !== 'in') return null;
   if (message.status === 'superseded') return { message, superseded: true, result: null };
@@ -218,38 +438,7 @@ async function processXianyuMessage(message) {
   markXianyuMessage(message, { status: 'processing', processingStartedAt: new Date().toISOString() });
   await saveXianyuState();
   try {
-    const result = await answerQuestion({ question: message.text, platform: 'xianyu', history: xianyuConversationHistory(message.conversationId, message.createdAtMs) });
-    const messageIndex = xianyuState.messages.indexOf(message);
-    const newerInbound = xianyuState.messages.slice(messageIndex + 1).find(item => item.direction === 'in'
-      && item.conversationId === message.conversationId
-      && ['received', 'processing'].includes(item.status));
-    if (newerInbound) {
-      markXianyuMessage(message, {
-        status: 'superseded',
-        handled: true,
-        supersededBy: newerInbound.id,
-        supersededAt: new Date().toISOString()
-      });
-      await saveXianyuState();
-      scheduleXianyuConversationProcessing(message.conversationId, 0);
-      return { message, superseded: true, result: null };
-    }
-    const risk = assessXianyuRisk(message.text, result);
-    const draft = String(result.answer || '').trim();
-    const fullAuto = xianyuState.replyMode === 'full_auto';
-    // Full-auto sends every non-empty generated answer. Human collaboration
-    // retains the existing guard: only low-risk, knowledge-backed answers are
-    // queued automatically (when the legacy autoReply flag is enabled).
-    if (draft && (fullAuto || (xianyuState.autoReply && risk.level === 'low'))) {
-      const replies = queueXianyuReplies({ conversationId: message.conversationId, text: draft, origin: 'auto', sourceMessageId: message.id, splitOnMarker: true });
-      const reply = replies[0];
-      markXianyuMessage(message, { status: 'auto_queued', risk, trace: result.trace, sources: result.sources, replyId: reply.id, replyIds: replies.map(item => item.id), draft });
-      await saveXianyuState();
-      return { message, reply, replies, risk, result };
-    }
-    markXianyuMessage(message, { status: 'needs_human', risk, trace: result.trace, sources: result.sources, draft });
-    await saveXianyuState();
-    return { message, risk, result };
+    return await executeXianyuWorkflow(message);
   } catch (error) {
     markXianyuMessage(message, { status: 'error', error: error.message || 'RAG 服务不可用' });
     await saveXianyuState();
@@ -704,6 +893,7 @@ async function serveStatic(request, response, pathname) {
 await loadKnowledge();
 await loadXianyuState();
 await loadPromptSettings();
+await loadWorkflowConfig();
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
   try {
@@ -723,6 +913,10 @@ const server = createServer(async (request, response) => {
     if (url.pathname === '/api/prompt-settings' && !isLocalRequest(request)) { sendJson(response, 403, { error: 'Prompt settings are available only from localhost.' }); return; }
     if (request.method === 'GET' && url.pathname === '/api/prompt-settings') { sendJson(response, 200, promptSettingsPayload()); return; }
     if (request.method === 'POST' && url.pathname === '/api/prompt-settings') { sendJson(response, 200, await savePromptSettings(await readJson(request))); return; }
+    if (url.pathname.startsWith('/api/workflow/') && !isLocalRequest(request)) { sendJson(response, 403, { error: 'Workflow settings are available only from localhost.' }); return; }
+    if (request.method === 'GET' && url.pathname === '/api/workflow/config') { sendJson(response, 200, workflowConfigPayload()); return; }
+    if (request.method === 'POST' && url.pathname === '/api/workflow/config') { sendJson(response, 200, await saveWorkflowConfig(await readJson(request))); return; }
+    if (request.method === 'GET' && url.pathname === '/api/workflow/runtime') { sendJson(response, 200, workflowRuntimePayload()); return; }
     if (request.method === 'POST' && url.pathname === '/api/import') {
       if (!isLocalRequest(request)) { sendJson(response, 403, { error: 'Imports are available only from localhost.' }); return; }
       const result = await importKnowledgeFiles({ root, input: await readJson(request), parseCsv, onImported: async () => { vectorIndex = null; vectorIndexPromise = null; await loadKnowledge(); } });

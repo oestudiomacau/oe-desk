@@ -286,8 +286,17 @@ async function injectBridge(contents) {
 }
 
 async function openXianyu(storeId = 'default', platformId = 'xianyu') {
-  activePlatform = Object.prototype.hasOwnProperty.call(platformUrls, platformId) ? platformId : 'xianyu';
-  activeStoreId = sanitizeStoreId(storeId);
+  const nextPlatform = Object.prototype.hasOwnProperty.call(platformUrls, platformId) ? platformId : 'xianyu';
+  const nextStoreId = sanitizeStoreId(storeId);
+  if (xianyuView && !xianyuView.webContents.isDestroyed() && activePlatform === nextPlatform && activeStoreId === nextStoreId) {
+    activateXianyuView();
+    scheduleXianyuLayout();
+    if (activePlatform === 'xianyu') startBridgePulse();
+    emitState({ embedded: true, visible: true });
+    return { platform: activePlatform, storeId: activeStoreId, session: `persist:${activePlatform}-${activeStoreId}`, url: xianyuView.webContents.getURL() || activePlatformUrl(), reused: true };
+  }
+  activePlatform = nextPlatform;
+  activeStoreId = nextStoreId;
   if (xianyuView) {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(xianyuView);
     if (!xianyuView.webContents.isDestroyed()) xianyuView.webContents.close();
@@ -378,6 +387,24 @@ async function openXianyu(storeId = 'default', platformId = 'xianyu') {
   return { platform: activePlatform, storeId: activeStoreId, session: `persist:${activePlatform}-${activeStoreId}`, url: activePlatformUrl() };
 }
 
+function hideXianyu() {
+  if (!xianyuView || xianyuView.webContents.isDestroyed()) return false;
+  try {
+    if (typeof xianyuView.setVisible === 'function') xianyuView.setVisible(false);
+    else xianyuView.setBounds({ x: -10000, y: -10000, width: 1, height: 1 });
+    currentBounds = null;
+    // Deliberately keep both the WebContents and bridge pulse alive. The
+    // platform listener is a background service, not a property of the visible
+    // workspace tab.
+    if (activePlatform === 'xianyu') startBridgePulse();
+    emitState({ embedded: true, visible: false, bounds: null });
+    return true;
+  } catch (error) {
+    pageLog('view-hide-error', { error: error.message });
+    return false;
+  }
+}
+
 function closeXianyu() {
   stopBridgePulse();
   if (xianyuView) {
@@ -440,6 +467,7 @@ async function createWindow() {
 
 ipcMain.handle('platform:open', (_event, input) => openXianyu(input?.storeId, input?.platform));
 ipcMain.handle('xianyu:open', (_event, input) => openXianyu(input?.storeId, 'xianyu'));
+ipcMain.handle('xianyu:hide', () => hideXianyu());
 ipcMain.handle('xianyu:close', () => closeXianyu());
 ipcMain.handle('xianyu:layout', () => layoutXianyuView());
 ipcMain.handle('xianyu:refresh', () => xianyuView?.webContents.reload());
@@ -454,7 +482,8 @@ ipcMain.handle('xianyu:request', async (event, input = {}) => {
   const response = await fetch(target, {
     method: String(input.method || 'GET').toUpperCase(),
     headers: { 'content-type': 'application/json' },
-    body: input.data ? String(input.data) : undefined
+    body: input.data ? String(input.data) : undefined,
+    signal: AbortSignal.timeout(12000)
   });
   return { status: response.status, responseText: await response.text() };
 });

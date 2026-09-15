@@ -349,6 +349,8 @@
     .workspace-header { position: sticky; z-index: 2; top: 0; display: flex; align-items: center; gap: 12px; min-height: 74px; padding: 0 24px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.94); backdrop-filter: blur(8px); }
     .workspace-heading { flex: 1; min-width: 0; } .workspace-heading h1 { margin: 0; font-size: 16px; } .workspace-heading p { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
     .workspace-body { width: 100%; max-width: none; padding: 23px clamp(22px, 4vw, 42px) 42px; }
+    .app-shell.workspace-open .workspace-view.workflow-view { display: flex; flex-direction: column; overflow: hidden; }
+    .workspace-view.workflow-view .workspace-body.workflow-workspace { display: flex; min-height: 0; flex: 1 1 0; padding: 0; overflow: hidden; }
     .workspace-notice { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 16px; padding: 10px 12px; border: 1px solid #e7ddbf; border-radius: 6px; color: #74612f; background: #fffaf0; font-size: 11px; }
     .workspace-notice i { width: 16px; height: 16px; flex: none; color: #ab7b20; }
     .workspace-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
@@ -373,6 +375,117 @@
     .check-list { display: grid; gap: 7px; } .check-line { display: flex; align-items: flex-start; gap: 7px; padding: 7px 0; border-bottom: 1px solid #eeeeea; color: #59615c; font-size: 11px; } .check-line:last-child { border-bottom: 0; } .check-line i { width: 15px; height: 15px; flex: none; color: #bd8b25; } .check-line.safe i { color: #27825b; }
     .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; } .metric { padding: 12px; border: 1px solid #e4e6e2; border-radius: 6px; background: #fff; } .metric b { display: block; color: #343a37; font: 600 22px/1 "DM Mono", monospace; } .metric span { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; }
     .quiet-button { height: 30px; padding: 0 9px; border: 1px solid #d7dad6; border-radius: 4px; color: #4e5953; background: #fff; font-size: 10px; font-weight: 700; }
+
+    /* Visual workflow canvas */
+    .workflow-studio { display: grid; width: 100%; min-width: 0; min-height: 0; height: 100%; grid-template-columns: 232px minmax(460px, 1fr) 280px; background: #f5f7f4; }
+    .workflow-library, .workflow-inspector { min-width: 0; min-height: 0; padding: 15px 12px; overflow-y: auto; background: #fbfcfa; }
+    .workflow-library { border-right: 1px solid #dfe4de; }
+    .workflow-inspector { border-left: 1px solid #dfe4de; background: #fff; }
+    .workflow-library-head, .workflow-toolbar, .workflow-library-tip, .workflow-footer, .workflow-node-inspector-title { display: flex; align-items: center; }
+    .workflow-library-head { justify-content: space-between; gap: 8px; padding: 0 2px 11px; border-bottom: 1px solid #e5e9e4; }
+    .workflow-library-head h2 { margin: 2px 0 0; font-size: 14px; }
+    .workflow-library-head .icon-btn { width: 30px; height: 30px; }
+    .workflow-list { display: grid; gap: 6px; padding: 11px 0; }
+    .workflow-list-item { display: flex; width: 100%; align-items: center; gap: 8px; min-width: 0; padding: 9px 8px; border: 1px solid transparent; border-radius: 6px; color: #44504a; background: transparent; text-align: left; }
+    .workflow-list-item:hover { border-color: #d5e2da; background: #f4faf6; }
+    .workflow-list-item.active { border-color: #a9d1bd; color: #184f38; background: #eaf7ef; box-shadow: inset 3px 0 0 #3e9870; }
+    .workflow-list-item > span:last-child { min-width: 0; }
+    .workflow-list-item b, .workflow-list-item small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .workflow-list-item b { font-size: 11px; } .workflow-list-item small { margin-top: 2px; color: var(--muted); font-size: 9px; }
+    .workflow-list-icon { display: grid; width: 27px; height: 27px; flex: none; place-items: center; border-radius: 5px; color: #428067; background: #e3f2e9; }
+    .workflow-list-icon i { width: 15px; height: 15px; }
+    .workflow-library-tip { align-items: flex-start; gap: 6px; margin-top: auto; padding: 10px 5px 0; border-top: 1px solid #e5e9e4; color: var(--muted); font-size: 10px; line-height: 1.5; }
+    .workflow-library-tip i { width: 14px; height: 14px; flex: none; color: #6f9381; }
+    .workflow-node-library { display: grid; gap: 8px; margin: 5px -3px 14px; padding: 11px 5px; border-top: 1px solid #e5e9e4; border-bottom: 1px solid #e5e9e4; }
+    .workflow-node-library-title { display: grid; gap: 2px; } .workflow-node-library-title b { color: #3d4a42; font-size: 11px; }
+    .workflow-node-search { display: flex; align-items: center; gap: 5px; height: 29px; padding: 0 7px; border: 1px solid #dce4dd; border-radius: 5px; color: #8a958c; background: #fff; }
+    .workflow-node-search:focus-within { border-color: #79a98c; box-shadow: 0 0 0 2px rgba(66,134,91,.1); } .workflow-node-search i { width: 13px; height: 13px; } .workflow-node-search input { width: 100%; min-width: 0; border: 0; outline: 0; color: #425047; background: transparent; font: 10px "Noto Sans SC", sans-serif; }
+    .workflow-node-catalog { display: grid; gap: 6px; } .workflow-node-group { overflow: hidden; border: 1px solid #e0e7e1; border-radius: 6px; background: #fff; }
+    .workflow-node-group summary { display: grid; grid-template-columns: minmax(0,1fr) auto 13px; align-items: center; gap: 5px; min-height: 29px; padding: 0 7px; color: #5e6a63; background: #f7faf7; cursor: pointer; list-style: none; } .workflow-node-group summary::-webkit-details-marker { display: none; } .workflow-node-group summary span { overflow: hidden; font-size: 9px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; } .workflow-node-group summary small { color: #98a39c; font: 8px "DM Mono", monospace; } .workflow-node-group summary i { width: 12px; height: 12px; transition: transform .16s; } .workflow-node-group[open] summary i { transform: rotate(180deg); } .workflow-node-group > div { display: grid; gap: 3px; padding: 4px; border-top: 1px solid #e7ece8; }
+    .workflow-node-group button { display: grid; grid-template-columns: 20px minmax(0,1fr); column-gap: 6px; align-items: center; width: 100%; min-width: 0; min-height: 31px; padding: 5px 6px; border: 1px solid transparent; border-radius: 5px; color: #4d5c53; background: transparent; text-align: left; cursor: grab; }
+    .workflow-node-group button:active { cursor: grabbing; } .workflow-node-group button:hover { border-color: #cce1d2; background: #f0f8f2; } .workflow-node-group button > i { width: 15px; height: 15px; color: #4d9270; } .workflow-node-group button b { min-width: 0; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; } .workflow-node-library-empty { margin: 3px 0; color: #89938d; font-size: 10px; text-align: center; }
+    .workflow-editor { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; background: #f6f8f5; }
+    .workflow-toolbar { min-height: 58px; flex: none; justify-content: space-between; gap: 14px; padding: 9px 14px; border-bottom: 1px solid #dfe4de; background: rgba(255,255,255,.94); }
+    .workflow-flow-summary { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .workflow-flow-summary .section-kicker { flex: none; } .workflow-flow-summary strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; } .workflow-runtime-status { overflow: hidden; max-width: 190px; color: #3b765d; font-size: 9px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+    .workflow-toolbar-actions { display: flex; align-items: center; flex: none; gap: 5px; }
+    .workflow-toolbar-actions .quiet-button { display: inline-flex; align-items: center; gap: 4px; }
+    .workflow-toolbar-actions .quiet-button i { width: 13px; height: 13px; }
+    .workflow-toolbar-actions .quiet-button.active { border-color: #8bbba0; color: #1e704e; background: #edf8f0; } .workflow-history-actions { display: flex; gap: 1px; padding-right: 4px; border-right: 1px solid #e2e6e1; } .workflow-history-actions .icon-btn { width: 26px; height: 27px; border-color: transparent; } .workflow-history-actions .icon-btn:disabled { opacity: .35; cursor: default; }
+    .workflow-zoom { display: flex; align-items: center; gap: 3px; padding-left: 4px; border-left: 1px solid #e2e6e1; }
+    .workflow-zoom .icon-btn { width: 27px; height: 27px; border-color: transparent; } .workflow-zoom span { width: 39px; color: var(--muted); font: 10px "DM Mono", monospace; text-align: center; }
+    .workflow-node-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; flex: none; padding: 7px 12px; border-bottom: 1px solid #e2e6e1; background: #fbfcfa; }
+    .workflow-node-tools button { display: inline-flex; align-items: center; gap: 4px; height: 27px; padding: 0 7px; border: 1px solid #d9e0da; border-radius: 4px; color: #4f5d55; background: #fff; font-size: 10px; font-weight: 700; }
+    .workflow-node-tools button:hover { border-color: #9fc6af; color: #216247; background: #eff9f3; }
+    .workflow-node-tools i { width: 13px; height: 13px; }
+    .workflow-more-nodes { display: inline-flex; align-items: center; gap: 4px; margin-left: 3px; color: #7b8780; font-size: 9px; }
+    .workflow-connect-hint { display: inline-flex; align-items: center; gap: 4px; min-width: 0; margin-left: 4px; color: #91671c; font-size: 10px; font-weight: 700; }
+    .workflow-connect-hint i { color: #b68427; }
+    .workflow-canvas { position: relative; min-width: 0; min-height: 250px; flex: 1 1 0; overflow: hidden; touch-action: none; cursor: grab; background-color: #f7faf7; background-image: radial-gradient(#c8d5cc 1px, transparent 1px); background-size: 22px 22px; }
+    .workflow-canvas.panning { cursor: grabbing; } .workflow-canvas.panning * { user-select: none; }
+    .workflow-world { position: absolute; top: 0; left: 0; width: 3600px; height: 2200px; transform-origin: 0 0; will-change: transform; }
+    .workflow-connections { position: absolute; inset: 0; overflow: visible; }
+    .workflow-edge { cursor: pointer; } .workflow-edge-line { fill: none; stroke: #7aa58e; stroke-width: 2; pointer-events: none; } .workflow-edge-hit { fill: none; stroke: transparent; stroke-width: 15; } .workflow-edge:hover .workflow-edge-line, .workflow-edge.selected .workflow-edge-line { stroke: #27805a; stroke-width: 3; } .workflow-edge text { fill: #6a744c; font: 600 12px "Noto Sans SC", sans-serif; text-anchor: middle; paint-order: stroke; stroke: #f7faf7; stroke-width: 4px; pointer-events: none; }
+    .workflow-edge marker path { fill: #7aa58e; }
+    .workflow-edge-preview { fill: none; stroke-width: 2.5; stroke-dasharray: 7 5; pointer-events: none; } .workflow-edge-preview.valid { stroke: #2f9061; } .workflow-edge-preview.invalid { stroke: #d3873a; }
+    .workflow-node-layer { position: absolute; inset: 0; pointer-events: none; }
+    .workflow-node { position: absolute; display: block; width: 202px; min-height: 94px; padding: 9px 11px; border: 1px solid #d9e2dc; border-radius: 8px; color: #344139; background: #fff; box-shadow: 0 7px 16px rgba(27,44,34,.11); cursor: grab; user-select: none; pointer-events: auto; }
+    .workflow-node:active { cursor: grabbing; } .workflow-node:hover { border-color: #84ae96; box-shadow: 0 9px 20px rgba(27,44,34,.15); }
+    .workflow-node.selected { border-color: #27805a; box-shadow: 0 0 0 3px rgba(49,145,101,.18), 0 9px 20px rgba(27,44,34,.15); }
+    .workflow-node.connecting { border-color: #c38a23; box-shadow: 0 0 0 3px rgba(202,148,36,.16), 0 9px 20px rgba(27,44,34,.15); }
+    .workflow-node.runtime-completed { border-color: #79b493; background: #f5fcf7; }
+    .workflow-node.runtime-running { z-index: 3; border-color: #168454; background: #effbf4; box-shadow: 0 0 0 4px rgba(27,145,91,.2), 0 12px 26px rgba(22,106,69,.22); animation: workflow-running-pulse 1.15s ease-in-out infinite; }
+    .workflow-node.runtime-running::after { position: absolute; top: 8px; right: 9px; width: 7px; height: 7px; border-radius: 50%; background: #16a165; box-shadow: 0 0 0 4px rgba(22,161,101,.14); content: ""; }
+    .workflow-node.runtime-error { border-color: #c94a52; background: #fff4f4; box-shadow: 0 0 0 4px rgba(201,74,82,.18), 0 12px 26px rgba(112,35,42,.18); }
+    @keyframes workflow-running-pulse { 50% { box-shadow: 0 0 0 7px rgba(27,145,91,.08), 0 12px 26px rgba(22,106,69,.22); } }
+    .workflow-node.invalid { border-color: #c94a52; background: #fff9f9; box-shadow: 0 0 0 3px rgba(201,74,82,.16), 0 9px 20px rgba(63,31,34,.13); }
+    .workflow-node.invalid .workflow-node-port { background: #c94a52; box-shadow: 0 0 0 1px #d99095; }
+    .workflow-node-head { display: flex; align-items: center; gap: 5px; margin-bottom: 6px; }
+    .workflow-node-icon { display: grid; width: 22px; height: 22px; flex: none; place-items: center; border-radius: 5px; color: #32765b; background: #e6f3eb; }
+    .workflow-node-icon i { width: 13px; height: 13px; } .workflow-node-type { color: #7c857f; font: 700 9px "DM Mono", monospace; letter-spacing: .25px; }
+    .workflow-node strong { display: block; overflow: hidden; color: #26322b; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+    .workflow-node p { display: -webkit-box; overflow: hidden; margin: 3px 0 0; color: #6d7770; font-size: 9px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .workflow-node-port { position: absolute; top: calc(50% - 5px); z-index: 2; width: 10px; height: 10px; padding: 0; border: 2px solid #fff; border-radius: 50%; background: #62a681; box-shadow: 0 0 0 1px #77aa8a; cursor: crosshair; transition: transform .15s, box-shadow .15s; }
+    .workflow-node-port.in { left: -6px; } .workflow-node-port.out { right: -6px; }
+    .workflow-node-port:hover, .workflow-node-port.drop-target { transform: scale(1.35); box-shadow: 0 0 0 3px rgba(42,135,89,.2), 0 0 0 1px #4d9a70; } .workflow-node-port.drop-target { background: #228457 !important; }
+    .workflow-node.violet .workflow-node-icon { color: #6754a7; background: #eeeafd; } .workflow-node.violet .workflow-node-port { background: #8774c2; box-shadow: 0 0 0 1px #9d91c7; }
+    .workflow-node.amber .workflow-node-icon { color: #996d18; background: #fff4d9; } .workflow-node.amber .workflow-node-port { background: #c69229; box-shadow: 0 0 0 1px #cda85c; }
+    .workflow-node.blue .workflow-node-icon { color: #266d99; background: #e4f3fc; } .workflow-node.blue .workflow-node-port { background: #4c93bd; box-shadow: 0 0 0 1px #76a8c2; }
+    .workflow-node.rose .workflow-node-icon { color: #a34b5a; background: #fcecef; } .workflow-node.rose .workflow-node-port { background: #c76d7b; box-shadow: 0 0 0 1px #ca96a0; }
+    .workflow-node.cyan .workflow-node-icon, .workflow-node-icon.cyan { color: #167680; background: #e3f6f7; } .workflow-node.cyan .workflow-node-port { background: #43a0a8; box-shadow: 0 0 0 1px #74b4ba; }
+    .workflow-node.indigo .workflow-node-icon, .workflow-node-icon.indigo { color: #465caf; background: #e9edff; } .workflow-node.indigo .workflow-node-port { background: #687dca; box-shadow: 0 0 0 1px #8f9ed2; }
+    .workflow-node.slate .workflow-node-icon, .workflow-node-icon.slate { color: #56626a; background: #edf1f3; } .workflow-node.slate .workflow-node-port { background: #7c8b94; box-shadow: 0 0 0 1px #9da8ae; }
+    .workflow-node.invalid .workflow-node-port { background: #c94a52 !important; box-shadow: 0 0 0 1px #d99095 !important; }
+    .workflow-canvas-guide { position: absolute; right: 11px; bottom: 10px; display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; border: 1px solid #dce6de; border-radius: 4px; color: #708076; background: rgba(255,255,255,.88); box-shadow: 0 2px 7px rgba(40,54,45,.06); font-size: 9px; pointer-events: none; }
+    .workflow-canvas-guide i { width: 13px; height: 13px; }
+    .workflow-minimap { position: absolute; z-index: 2; bottom: 37px; right: 11px; width: 176px; height: 108px; padding: 0; overflow: hidden; border: 1px solid #cfdcd2; border-radius: 5px; background: rgba(255,255,255,.94); box-shadow: 0 4px 12px rgba(34,56,41,.1); cursor: pointer; } .workflow-minimap svg { display: block; width: 100%; height: 100%; } .workflow-minimap-bg { fill: #eef5ef; } .workflow-minimap line { stroke: #a6c5af; stroke-width: .6; } .workflow-minimap rect:not(.workflow-minimap-bg):not(.workflow-minimap-viewport) { fill: #6fae86; } .workflow-minimap rect.selected { fill: #287d59; } .workflow-minimap-viewport { fill: rgba(58,134,91,.1); stroke: #3b8b64; stroke-width: 1; }
+    .workflow-footer { min-height: 31px; flex: none; justify-content: space-between; gap: 10px; padding: 6px 12px; border-top: 1px solid #e0e5df; color: #6c776f; background: #fff; font-size: 9px; }
+    .workflow-footer span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .workflow-inspector-head { padding: 2px 2px 12px; border-bottom: 1px solid #e7ebe6; }
+    .workflow-inspector-head > h2 { margin: 3px 0 0; font-size: 14px; } .workflow-inspector-head > p, .workflow-node-inspector-title p { margin: 4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.55; }
+    .workflow-node-inspector-title { align-items: flex-start; gap: 8px; margin-top: 6px; } .workflow-node-inspector-title h2 { margin: 0; font-size: 13px; }
+    .workflow-form { display: grid; gap: 10px; padding: 13px 2px; }
+    .workflow-form label { display: grid; gap: 4px; color: #59635c; font-size: 10px; font-weight: 700; }
+    .workflow-form input[type="text"], .workflow-form input[type="number"], .workflow-form textarea, .workflow-form select { width: 100%; min-width: 0; border: 1px solid #dce2dc; border-radius: 5px; color: #344139; background: #fbfcfa; font: 11px/1.45 "Noto Sans SC", sans-serif; outline: 0; }
+    .workflow-form input[type="text"], .workflow-form input[type="number"], .workflow-form select { height: 31px; padding: 0 8px; } .workflow-form textarea { min-height: 76px; padding: 7px 8px; resize: vertical; }
+    .workflow-form input:focus, .workflow-form textarea:focus, .workflow-form select:focus { border-color: #78a98d; background: #fff; box-shadow: 0 0 0 3px rgba(79,149,108,.12); }
+    .workflow-switch { display: flex !important; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px !important; padding: 9px; border: 1px solid #e1e7e1; border-radius: 6px; background: #f8fbf8; }
+    .workflow-switch span { min-width: 0; } .workflow-switch b, .workflow-switch small { display: block; } .workflow-switch small { margin-top: 2px; color: var(--muted); font-size: 9px; font-weight: 400; line-height: 1.4; }
+    .workflow-switch input { width: 17px; height: 17px; accent-color: #27805a; }
+    .workflow-inspector-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 2px 12px; } .workflow-inspector-actions .active { border-color: #ce9b41; color: #8e641a; background: #fff8ea; }
+    .workflow-inspector-empty { display: grid; gap: 5px; padding: 14px 3px; border-top: 1px solid #e7ebe6; color: var(--muted); font-size: 10px; line-height: 1.55; }
+    .workflow-inspector-empty i { width: 20px; height: 20px; color: #86a594; } .workflow-inspector-empty b { color: #526158; font-size: 11px; }
+    .workflow-node-position { display: flex; align-items: center; gap: 4px; padding: 9px 2px; border-top: 1px solid #e7ebe6; color: #8a948d; font: 9px "DM Mono", monospace; } .workflow-node-position i { width: 12px; height: 12px; }
+    .workflow-edge-summary { display: flex; align-items: center; justify-content: space-between; gap: 5px; margin: 13px 2px 2px; padding: 8px; border: 1px solid #e3e9e3; border-radius: 6px; color: #526158; background: #f8fbf8; font-size: 9px; } .workflow-edge-summary > div { display: flex; min-width: 0; align-items: center; gap: 4px; } .workflow-edge-summary span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .workflow-edge-summary i { width: 13px; height: 13px; flex: none; color: #6e9f81; } .workflow-form-help { display: flex; align-items: flex-start; gap: 5px; margin: -3px 2px 10px; color: #748079; font-size: 9px; line-height: 1.5; } .workflow-form-help i { width: 13px; height: 13px; flex: none; color: #719a80; }
+    .workflow-validation { margin: 0 2px 12px; padding: 10px; border: 1px solid #dce5de; border-radius: 6px; background: #f8fbf8; }
+    .workflow-validation > div { display: flex; align-items: center; gap: 5px; } .workflow-validation > div i { width: 15px; height: 15px; } .workflow-validation > div b { font-size: 11px; }
+    .workflow-validation p { margin: 5px 0 0; color: #59685f; font-size: 10px; line-height: 1.55; }
+    .workflow-validation.valid { border-color: #b8ddc8; background: #f0faf4; } .workflow-validation.valid > div { color: #287456; }
+    .workflow-validation.invalid { border-color: #ecc3c5; background: #fff6f6; } .workflow-validation.invalid > div { color: #a3333b; }
+    .validation-errors { display: grid; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+    .validation-errors li { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; color: #6f4b4e; font-size: 10px; line-height: 1.45; }
+    .validation-errors button { flex: none; height: 23px; padding: 0 6px; border: 1px solid #e2b5b9; border-radius: 4px; color: #a3333b; background: #fff; font-size: 9px; font-weight: 700; }
+    .validation-errors button:hover { border-color: #c85760; background: #fff0f0; }
 
     /* Header reply-mode segmented control. */
     .reply-mode-switch { display: inline-flex; align-items: center; gap: 3px; flex: none; min-height: 32px; padding: 3px; border: 1px solid #dfe2dc; border-radius: 6px; background: #f7f8f5; }
@@ -550,8 +663,10 @@
 
     @media (max-width: 1250px) and (min-width: 721px) { .chat-header { gap: 8px; padding: 0 14px; } .chat-title-line h1 { font-size: 14px; } .reply-mode-switch { gap: 1px; } .reply-mode-label { padding: 0 3px; } .reply-mode-option { padding: 0 5px; } .header-actions { gap: 3px; } .header-actions .icon-btn { width: 30px; height: 30px; } }
     @media (max-width: 1050px) { .app-shell { grid-template-columns: minmax(220px, 238px) 0 minmax(0, 1fr); } .column-resizer { display: none; } .chat, .workspace-view { grid-column: 3; } .context-panel { grid-column: auto; grid-row: auto; position: fixed; z-index: 4; top: 58px; right: 0; bottom: 0; width: min(410px, 92vw); transform: translateX(105%); box-shadow: -12px 0 34px rgba(0,0,0,.13); transition: transform .25s ease; } .context-panel.open { transform: translateX(0); } .context-toggle { display: inline-grid; } .workbench-columns { grid-template-columns: 1fr 1fr; } .workbench-columns .workspace-card:last-child { grid-column: 1 / -1; } }
+    @media (max-width: 1420px) and (min-width: 721px) { .workflow-studio { grid-template-columns: 200px minmax(360px, 1fr) 232px; } .workflow-library, .workflow-inspector { padding: 12px 9px; } .workflow-toolbar { gap: 7px; padding-right: 9px; padding-left: 9px; } .workflow-toolbar-actions { gap: 2px; } .workflow-toolbar-actions .quiet-button { justify-content: center; width: 28px; padding: 0; font-size: 0; } .workflow-toolbar-actions .quiet-button i { margin: 0; } .workflow-flow-summary .section-kicker { display: none; } }
     @media (max-width: 720px) { body { background: var(--paper); } .app-shell { display: flex; flex-direction: column; min-height: 100svh; width: 100%; } .workspace-topbar { min-height: 54px; padding: 0 10px; } .workspace-topbar-label { display: none; } .workspace-nav { gap: 2px; } .workspace-search { width: 92px; } .sidebar { position: fixed; z-index: 6; inset: 54px auto 0 0; width: min(264px, 86vw); transform: translateX(-105%); box-shadow: 12px 0 34px rgba(0,0,0,.13); transition: transform .25s ease; } .sidebar.open { transform: translateX(0); } .chat, .workspace-view { width: 100%; height: calc(100svh - 54px); flex: 1; } .chat-header, .workspace-header { height: auto; min-height: 64px; padding: 9px 14px; } .workspace-body { padding: 16px 15px 30px; } .mobile-menu { display: inline-grid; } .chat-title-line h1 { font-size: 14px; } .chat-subtitle { max-width: 180px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; } .reply-mode-switch { position: absolute; top: 67px; left: 14px; right: 14px; justify-content: center; } .reply-mode-label { display: none; } .reply-mode-option { flex: 1; } .header-actions .icon-btn:not(.context-toggle) { display: none; } .chat-content { padding: 57px 15px 15px; } .message { gap: 8px; } .message-avatar { width: 27px; height: 27px; } .bubble { max-width: calc(100vw - 78px); } .product-card { grid-template-columns: 72px 1fr; } .product-card img { width: 72px; height: 72px; } .suggestions { padding: 4px 15px 9px; overflow-x: auto; flex-wrap: nowrap; } .suggestion { flex: none; } .composer { padding: 0 15px 8px; } .composer-note { display: none; } .chat-handoff { grid-template-columns: 1fr; gap: 4px; padding: 6px 15px 8px; } .chat-handoff-label { padding-top: 0; } .chat-handoff .transfer-card { grid-template-columns: 1fr auto; gap: 5px; } .chat-handoff .transfer-summary, .chat-handoff .queue-choices { display: none; } .chat-handoff .transfer-btn { grid-column: 2; grid-row: 1; } .safety-banner { padding: 7px 15px; } .safety-banner button { display: none; } .draft-evidence-grid, .workspace-grid, .workbench-columns, .safety-mode { grid-template-columns: 1fr; } .fact-library, .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .workspace-card.wide, .workbench-columns .workspace-card:last-child { grid-column: auto; } .knowledge-table { min-width: 610px; } .workspace-card.table-scroll { overflow-x: auto; } .rule-row { grid-template-columns: 1fr auto; } .rule-row > span { grid-column: 1; } .handoff-edit-form { grid-template-columns: 1fr; } .training-modal { height: min(760px, calc(100vh - 24px)); } .training-grid { grid-template-columns: 1fr; grid-template-rows: minmax(260px, 1fr) minmax(200px, 36%); overflow: hidden; } .training-chat { min-height: 0; } .training-review { min-height: 0; border-top: 1px solid var(--line); border-left: 0; } .training-header { padding: 0 12px; } .training-header-title p { display: none; } }
     @media (max-width: 720px) { .import-record-head { align-items: flex-start; flex-direction: column; } .import-record-meta { width: 100%; justify-content: space-between; white-space: normal; } .import-record-actions { flex-wrap: wrap; } .chat-handoff { grid-template-columns: 1fr; } .chat-handoff .transfer-card { width: 100%; } .xianyu-layout { grid-template-columns: 1fr; min-height: 0; } .xianyu-browser iframe { min-height: 420px; } .xianyu-inbox { min-height: 500px; } .xianyu-browser-note { align-items: flex-start; flex-wrap: wrap; } }
+    @media (max-width: 720px) { .workspace-view.workflow-view .workspace-body.workflow-workspace { overflow: auto; } .workflow-studio { min-width: 720px; min-height: 560px; grid-template-columns: 190px minmax(330px, 1fr) 220px; } .workflow-library, .workflow-inspector { padding: 10px 8px; } .workflow-toolbar { min-height: 52px; gap: 5px; padding: 7px 8px; } .workflow-toolbar-actions { gap: 2px; } .workflow-toolbar-actions .quiet-button { justify-content: center; width: 28px; padding: 0; font-size: 0; } .workflow-toolbar-actions .quiet-button i { margin: 0; } .workflow-zoom { display: none; } .workflow-node-tools { padding: 6px 8px; } .workflow-canvas { min-height: 310px; } }
   </style>
 </head>
 <body>
@@ -564,6 +679,7 @@
         <button class="workspace-nav-item" data-workspace="facts"><i data-lucide="badge-check"></i>商品事实库</button>
         <button class="workspace-nav-item" data-workspace="knowledge"><i data-lucide="book-open-check"></i>客服问答知识</button>
         <button class="workspace-nav-item" data-workspace="prompts"><i data-lucide="bot"></i>提示词与技能</button>
+        <button class="workspace-nav-item" data-workspace="workflow"><i data-lucide="workflow"></i>工作流画布</button>
         <button class="workspace-nav-item" data-workspace="automation"><i data-lucide="sliders-horizontal"></i>自动回复规则</button>
         <button class="workspace-nav-item" data-workspace="gallery"><i data-lucide="images"></i>素材图库</button>
         <button class="workspace-nav-item" data-workspace="tickets"><i data-lucide="clipboard-list"></i>售后工单</button>
@@ -603,7 +719,7 @@
         <button class="icon-btn mobile-menu" id="menu-button" title="打开会话列表"><i data-lucide="menu"></i></button>
          <div class="chat-person"><div class="chat-title-line"><h1 id="chat-title">会话工作台</h1><span class="platform-badge web" id="channel-badge">未接入</span><span class="tag collaboration" id="mode-tag">人工协同</span></div><div class="chat-subtitle" id="chat-subtitle">请选择左侧平台，打开聊天界面并完成登录。</div></div>
          <div class="reply-mode-switch" role="group" aria-label="回复模式"><span class="reply-mode-label">回复模式</span><button class="reply-mode-option" type="button" data-reply-mode="full_auto">AI 全托管</button><button class="reply-mode-option active" type="button" data-reply-mode="human_collab">人工协同</button></div>
-        <div class="header-actions"><button class="icon-btn" title="搜索对话"><i data-lucide="search"></i></button><button class="icon-btn badge-wrap" id="notify-button" title="通知中心" data-workspace="notifications"><i data-lucide="bell"></i><span class="badge-count" id="notify-count">3</span></button><button class="icon-btn" title="更多操作"><i data-lucide="ellipsis"></i></button><button class="icon-btn context-toggle" id="context-button" title="打开用户上下文"><i data-lucide="panel-right-open"></i></button></div>
+        <div class="header-actions"><button class="icon-btn" title="搜索对话"><i data-lucide="search"></i></button><button class="icon-btn badge-wrap" id="notify-button" title="通知中心" data-workspace="notifications"><i data-lucide="bell"></i><span class="badge-count" id="notify-count" hidden>0</span></button><button class="icon-btn" title="更多操作"><i data-lucide="ellipsis"></i></button><button class="icon-btn context-toggle" id="context-button" title="打开用户上下文"><i data-lucide="panel-right-open"></i></button></div>
       </header>
       <div class="platform-chat-frame" id="platform-chat-frame" aria-live="polite">
         <div class="platform-frame-toolbar"><strong id="platform-frame-title">平台聊天界面</strong><span id="platform-frame-status">选择平台后加载登录页</span><div class="platform-frame-actions"><button class="icon-btn" id="platform-frame-back" type="button" title="后退"><i data-lucide="arrow-left"></i></button><button class="icon-btn" id="platform-frame-forward" type="button" title="前进"><i data-lucide="arrow-right"></i></button><button class="icon-btn" id="platform-frame-refresh" type="button" title="刷新"><i data-lucide="refresh-cw"></i></button><button class="quiet-button" id="platform-frame-retry" type="button" hidden>重试</button><button class="quiet-button" id="platform-frame-open" type="button">打开平台登录页</button></div></div>
@@ -634,6 +750,7 @@
   <div class="toast-tip" id="toast-tip" role="status" aria-live="polite"></div>
   <script src="/client/import-manager.js"></script>
   <script src="/client/prompt-skill-manager.js"></script>
+  <script src="/client/workflow-canvas.js"></script>
   <script>
     // Icons are progressive enhancement; the workbench remains usable offline.
     const iconApi = globalThis.lucide || { createIcons() {} };
@@ -680,12 +797,13 @@
     let replyMode = 'human_collab';
     const workspaceMeta = {
       facts: { title: '商品事实库', subtitle: '商品客观事实与客服话术分离；每一项事实都保留证据与复核边界。' },
-      knowledge: { title: '客服问答知识库', subtitle: '候选知识不能直接进入生产，必须经过人工审核与版本留痕。' },
+      knowledge: { title: '客服问答知识库', subtitle: '导入资料会保留文件来源，并在本地 RAG 服务重建后用于检索。' },
       handoff: { title: '转人工规则中心', subtitle: '高风险规则默认开启，规则命中后优先将会话交给合适队列。' },
       safety: { title: '安全与上线控制', subtitle: '默认人机协同；只有低风险、证据可靠且规则允许时才进入自动回复白名单。' },
       review: { title: '复盘中心', subtitle: '用可行动的问题清单发现知识缺口，而不是只看汇总图表。' },
       stores: { title: '店铺接入', subtitle: '管理天猫、抖音等渠道的接待开关、队列与连接状态。' },
       prompts: { title: '提示词与技能', subtitle: '管理客服角色、回答边界和可挂载的业务技能。' },
+      workflow: { title: '工作流画布', subtitle: '用节点和连线图形化创建、编辑本地工作流配置。' },
       automation: { title: '自动回复规则', subtitle: '配置欢迎语、免打扰词、禁用词、结束语与自动备注。' },
       gallery: { title: '素材图库', subtitle: '集中管理商品图片、安装示意和客服可引用素材。' },
       tickets: { title: '售后工单', subtitle: '把退款、保修与订单问题交给售后队列，跟踪处理状态。' },
@@ -753,7 +871,7 @@
       const subtitle = document.getElementById('chat-subtitle'); if (subtitle) subtitle.textContent = message;
       const badge = document.getElementById('channel-badge'); if (badge) { badge.textContent = '未接入'; badge.className = 'platform-badge web'; }
       if (chatContent) chatContent.innerHTML = `<div class="platform-empty-state">${escapeHtml(message)}</div>`;
-      if (window.rcbElectron?.closeXianyu) window.rcbElectron.closeXianyu().catch(() => {});
+      if (window.rcbElectron?.hideXianyu) window.rcbElectron.hideXianyu().catch(() => {});
     }
     function firstConnectedPlatform(preferred = null) {
       if (preferred && isPlatformConnected(preferred)) return preferred;
@@ -837,7 +955,10 @@
     let galleryState = loadState('rcb-gallery', [{ id: 'g1', title: 'VD 350MM 安装示意', type: '安装图', scope: 'VD 系列', icon: 'image' }, { id: 'g2', title: 'S8 后视镜商品详情', type: '商品图', scope: 'S8 系列', icon: 'images' }, { id: 'g3', title: '售后寄回包装要求', type: '规则图', scope: '全店通用', icon: 'package-check' }]);
     let ticketsState = loadState('rcb-tickets', [{ id: 'TK-1024', title: '抖音退款进度核查', customer: '抖音店铺', queue: '售后订单', status: '待处理', created: '09:12', detail: '需核对平台订单售后页状态。' }, { id: 'TK-1023', title: '天猫适配确认', customer: '天猫店铺', queue: '技术核对', status: '处理中', created: '昨天 17:46', detail: '需车型、卡钳和刹车盘资料。' }]);
     if (Array.isArray(ticketsState)) { ticketsState = ticketsState.map(item => ({ ...item, customer: /[男女]士|先生/.test(String(item.customer || '')) ? (String(item.title || '').includes('抖音') ? '抖音店铺' : '天猫店铺') : item.customer })); saveState('rcb-tickets', ticketsState); }
-    let notificationsState = loadState('rcb-notifications', [{ id: 'n1', title: '训练场新增候选知识', body: '有新的客户问法等待人工审核。', time: '刚刚', unread: true }, { id: 'n2', title: '抖音店铺尚未启动监听', body: '启动后才会接收新的会话。', time: '今天 09:00', unread: true }, { id: 'n3', title: 'RAG 服务已连接', body: '本地模型与知识库接口可用。', time: '昨天 18:24', unread: true }]);
+    const demoNotificationIds = new Set(['n1', 'n2', 'n3']);
+    let notificationsState = loadState('rcb-notifications', []);
+    notificationsState = Array.isArray(notificationsState) ? notificationsState.filter(item => item && !demoNotificationIds.has(item.id)) : [];
+    saveState('rcb-notifications', notificationsState);
     let auditState = loadState('rcb-audit', [{ id: 'a1', item: 'S8 后视镜发货话术', action: '归档', operator: '系统审核', time: '2026-09-09 16:42', recoverable: true }, { id: 'a2', item: '退款进度通用补问', action: '版本替换', operator: '客服主管', time: '2026-09-08 11:20', recoverable: false }]);
     let handoffRules = loadState('rcb-handoff-rules', [
       { id: 'fitment', title: '车型适配 / 减震 / 刹车泵', keywords: '适配、能装、孔距、缸径、制动力', queue: '技术核对', enabled: true, reason: '技术与安全高风险，不可按经验推荐' },
@@ -855,20 +976,6 @@
       const fact = productFacts[clientFactIds[clientId] || 'unknown'];
       const statusClass = fact.review.includes('复核') || fact.review.includes('待') ? 'fact-status' : 'fact-status';
       document.getElementById('current-fact-card').innerHTML = `<div class="fact-card-head"><div><strong>${escapeHtml(fact.model)}</strong><span>SKU / 规格：${escapeHtml(fact.sku)}</span></div><em class="${statusClass}">${escapeHtml(fact.review)}</em></div><div class="fact-rows"><div><b>证据</b><span>${escapeHtml(fact.evidence)}</span></div><div><b>复核</b><span>${escapeHtml(fact.reviewed)}</span></div><div><b>适配</b><span>${escapeHtml(fact.fitment)}</span></div></div><div class="fact-warning"><b>禁止推断：</b>${escapeHtml(fact.prohibited)}</div>`;
-    }
-    function knowledgeRowsMarkup() {
-      const baseRows = [
-        ['车型适配确认规范', '全店通用', '高', '已批准', '人工维护 · v1.4'],
-        ['VD 系列：客户询问 330 / 350MM', 'VD 系列', '高', '待人工审核', '天猫详情图 + 技术待复核'],
-        ['S8 后视镜发货话术', 'S8 系列', '高', '已拒绝', '含未核验时效承诺'],
-        ['退款进度通用补问', '全店通用', '高', '已归档', '已由新版本替代']
-      ];
-      const candidateRows = candidateKnowledge.slice(0, 6).map(item => [item.title || '训练场对话摘录', item.scope || '待标注商品范围', item.risk || '中', item.status || '候选', item.source || '人工编辑草稿']);
-      return [...candidateRows, ...baseRows].map((row, index) => {
-        const stateMap = { '候选': 'candidate', '待人工审核': 'pending', '已批准': 'approved', '已拒绝': 'rejected', '已归档': 'archived' };
-        const articleId = row[0].includes('车型适配') ? 'fitment' : row[0].includes('VD 系列') ? 'vd' : row[0].includes('退款') ? 'after-sales' : '';
-        return `<tr data-knowledge-row data-search="${escapeHtml(row.join(' '))}" data-status="${escapeHtml(row[3])}"><td><button class="table-link" data-knowledge-open="${articleId}" ${articleId ? '' : 'disabled'}><strong>${escapeHtml(row[0])}</strong></button><br><small>版本与审核记录可追溯</small></td><td>${escapeHtml(row[1])}</td><td>${escapeHtml(row[2])}</td><td><span class="status-chip ${stateMap[row[3]] || 'candidate'}">${escapeHtml(row[3])}</span></td><td>${escapeHtml(row[4])}</td>${row[3] === '候选' ? `<td><button class="quiet-button" data-candidate-review="${index}">提交审核</button></td>` : '<td>—</td>'}</tr>`;
-      }).join('');
     }
     function importedDataTableMarkup(item) {
       const rows = Array.isArray(item.table) && item.table.length ? item.table : [[item.preview || '']];
@@ -957,10 +1064,19 @@
     }
     function renderWorkspace(name) {
       const body = document.getElementById('workspace-body');
-      if (name === 'facts') {
+      const workflow = name === 'workflow';
+      body.classList.toggle('workflow-workspace', workflow);
+      document.getElementById('workspace-view').classList.toggle('workflow-view', workflow);
+      if (!workflow) globalThis.RcbWorkflowCanvas?.unmount?.();
+      if (workflow) {
+        body.innerHTML = '';
+        const editor = globalThis.RcbWorkflowCanvas?.mount(body);
+        requestAnimationFrame(() => editor?.fitToFlow?.());
+        return;
+      } else if (name === 'facts') {
         body.innerHTML = `<div class="workspace-notice"><i data-lucide="info"></i><span><b>事实边界：</b>导入后会写入本地 RAG 资料库；资料可被检索，但适配、制动与动态信息仍需按风险规则人工核验。</span></div><article class="workspace-card wide"><div class="workspace-card-head"><div><span class="section-kicker">PRODUCT FACT LIBRARY</span><h2>商品资料导入</h2><p>将商品说明、规格表和目录导入为可检索资料。支持 TXT、MD、CSV、Excel 和 JSON。</p></div><button class="primary" data-import-trigger="products">选择文件并导入</button></div><input id="import-products-input" class="file-import-input" data-import-input="products" type="file" accept=".txt,.md,.csv,.xlsx,.xls,.json" multiple><div id="product-import-status">请选择 CSV / Excel 等文件；选择后会立即解析并重建 RAG。</div>${importedFilesMarkup('products')}</article><div class="workspace-grid" style="margin-top:13px"><article class="workspace-card"><span class="section-kicker">RAG INGESTION</span><h2 style="margin-top:4px">导入后的处理</h2><ul class="info-list"><li><b>Excel / CSV</b><span>按工作表或行转换为可检索文本。</span></li><li><b>TXT / MD / JSON</b><span>原始文字保留为带来源标记的 Markdown。</span></li><li><b>自动重建</b><span>服务会重新加载资料并清空旧向量索引。</span></li></ul></article><article class="workspace-card"><span class="section-kicker">PRODUCT BOUNDARY</span><h2 style="margin-top:4px">资料不是承诺</h2><p>导入资料可参与检索；但车型适配、制动、库存、价格、时效与售后仍由转人工规则和模型安全提示共同约束。</p><div class="draft-blocked" style="margin-top:12px"><b>高风险：</b>制动、减震与车型适配仍要求技术人工复核。</div></article></div>`;
       } else if (name === 'knowledge') {
-        body.innerHTML = `<div class="workspace-notice"><i data-lucide="lock-keyhole"></i><span><b>双轨管理：</b>训练场候选条目仍需审核；你在这里主动导入的资料会直接写入本地 RAG 知识库，并保留文件来源。</span></div><article class="workspace-card"><div class="workspace-card-head"><div><span class="section-kicker">CUSTOMER ANSWER KNOWLEDGE</span><h2>客服知识资料导入</h2><p>导入 FAQ、售后规范、平台规则或 Markdown 文档，服务会立即重新加载并用于检索。</p></div><button class="primary" data-import-trigger="knowledge">选择文件并导入</button></div><input id="import-knowledge-input" class="file-import-input" data-import-input="knowledge" type="file" accept=".txt,.md,.csv,.xlsx,.xls,.json" multiple><div id="knowledge-import-status">请选择 CSV / Excel 等文件；选择后会立即解析并重建 RAG。</div>${importedFilesMarkup('knowledge')}</article><article class="workspace-card table-scroll" style="margin-top:13px"><div class="workspace-card-head"><div><span class="section-kicker">TRAINING CANDIDATES</span><h2>训练场候选条目</h2><p>训练场沉淀内容保持候选状态，不会自动作为正式资料写入 RAG。</p></div><button class="quiet-button" id="knowledge-batch">批量标记待审核</button></div><div class="filter-row"><input id="knowledge-search" placeholder="搜索问题、商品范围或来源" /><select id="knowledge-status-filter"><option value="">全部状态</option><option>候选</option><option>待人工审核</option><option>已批准</option><option>已拒绝</option><option>已归档</option></select><select id="knowledge-product-filter"><option value="">全部商品</option><option>全店通用</option><option>VD 系列</option><option>S8 系列</option></select></div><table class="knowledge-table"><thead><tr><th>问题 / 标准答复</th><th>商品范围</th><th>风险</th><th>状态</th><th>来源 / 审核</th><th>操作</th></tr></thead><tbody id="knowledge-workspace-rows">${knowledgeRowsMarkup()}</tbody></table><p id="knowledge-workspace-status" style="margin-top:10px"></p></article>`;
+        body.innerHTML = `<div class="workspace-notice"><i data-lucide="lock-keyhole"></i><span><b>本地资料：</b>你在这里导入的文件会写入本地 RAG 知识库，并保留文件来源。</span></div><article class="workspace-card"><div class="workspace-card-head"><div><span class="section-kicker">CUSTOMER ANSWER KNOWLEDGE</span><h2>客服知识资料导入</h2><p>导入 FAQ、售后规范、平台规则或 Markdown 文档，服务会立即重新加载并用于检索。</p></div><button class="primary" data-import-trigger="knowledge">选择文件并导入</button></div><input id="import-knowledge-input" class="file-import-input" data-import-input="knowledge" type="file" accept=".txt,.md,.csv,.xlsx,.xls,.json" multiple><div id="knowledge-import-status">请选择 CSV / Excel 等文件；选择后会立即解析并重建 RAG。</div>${importedFilesMarkup('knowledge')}</article>`;
       } else if (name === 'handoff') {
         body.innerHTML = `<div class="workspace-notice"><i data-lucide="headset"></i><span><b>默认保护：</b>规则命中时生成转接建议与固定话术，不会擅自承诺处理结果。</span></div><article class="workspace-card"><div class="workspace-card-head"><div><span class="section-kicker">HUMAN HANDOFF RULES</span><h2>转人工规则</h2><p>规则保存在本机，可编辑名称、关键词、队列和触发原因。</p></div><button class="quiet-button" id="new-handoff-rule">新建规则</button></div>${handoffRules.map(rule => `<div class="rule-row"><div><b>${escapeHtml(rule.title)}</b><span>关键词：${escapeHtml(rule.keywords)}</span></div><span>原因：${escapeHtml(rule.reason)}</span><span><b>${escapeHtml(rule.queue)}</b><small>${rule.queue === '技术核对' ? '当前资料无法确认直接适配，需技术同事核对后回复。' : '这类问题需要核对具体订单信息，已为您转接技术或售后同事处理。'}</small></span><div class="rule-actions"><button class="toggle ${rule.enabled ? 'on' : ''}" data-handoff-toggle="${rule.id}" aria-label="切换规则"></button><button class="icon-btn" data-handoff-edit="${rule.id}" title="编辑规则"><i data-lucide="pencil"></i></button><button class="icon-btn" data-handoff-delete="${rule.id}" title="删除规则"><i data-lucide="trash-2"></i></button></div><form class="handoff-edit-form" data-handoff-form="${rule.id}" hidden><input name="title" value="${escapeHtml(rule.title)}" aria-label="规则名称"><input name="keywords" value="${escapeHtml(rule.keywords)}" aria-label="关键词"><select name="queue"><option ${rule.queue === '技术核对' ? 'selected' : ''}>技术核对</option><option ${rule.queue === '售后订单' ? 'selected' : ''}>售后订单</option><option ${rule.queue === '人工确认' ? 'selected' : ''}>人工确认</option></select><input name="reason" value="${escapeHtml(rule.reason)}" aria-label="触发原因"><button class="primary" data-handoff-save="${rule.id}" type="button">保存修改</button></form></div>`).join('')}</article><article class="workspace-card" style="margin-top:13px" id="handoff-rule-form" hidden><h2>新建转人工规则</h2><form class="inline-form" id="create-handoff-form"><label>规则名称<input name="title" required placeholder="例如：改装技术咨询"></label><label>转接队列<select name="queue"><option>技术核对</option><option>售后订单</option><option>人工确认</option></select></label><button class="primary" type="submit">保存规则</button></form><label class="field-label" style="margin-top:8px">关键词<input name="keywords" form="create-handoff-form" placeholder="用顿号分隔，例如：改装、安装、故障"></label></article><div class="workspace-grid" style="margin-top:13px"><article class="workspace-card"><h2>转接前自动整理</h2><ul class="info-list"><li><b>会话摘要</b><span>客户问题、已补充车型/订单信息、命中风险规则。</span></li><li><b>引用证据</b><span>当前命中的商品事实与问答条目，不混入网络参考。</span></li></ul></article><article class="workspace-card"><h2>队列边界</h2><ul class="info-list"><li><b>技术核对</b><span>车型、安装、制动、减震等需规格确认的问题。</span></li><li><b>售后订单</b><span>退款、保修、订单、地址等需平台订单核验的问题。</span></li></ul></article></div>`;
       } else if (name === 'safety') {
@@ -983,7 +1099,10 @@
       } else if (name === 'tickets') {
         body.innerHTML = `<div class="workspace-notice"><i data-lucide="clipboard-list"></i><span><b>售后队列：</b>工单状态来自本地演示数据，处理结果仍需在天猫/抖音订单后台核验。</span></div><div class="ticket-grid">${ticketsState.map(ticket => `<article class="ticket-card ${ticket.status === '已完成' ? 'done' : ''}"><div class="ticket-head"><div><h3>${escapeHtml(ticket.title)}</h3><p>${escapeHtml(ticket.customer)} · ${escapeHtml(ticket.id)}</p></div><span class="status-chip ${ticket.status === '已完成' ? 'approved' : 'pending'}">${ticket.status}</span></div><div class="ticket-meta"><span>${escapeHtml(ticket.queue)}</span><span>${escapeHtml(ticket.created)}</span></div><p>${escapeHtml(ticket.detail)}</p><div class="ticket-actions"><button class="quiet-button" data-ticket-assign="${ticket.id}">分配${ticket.queue}</button><button class="quiet-button" data-ticket-done="${ticket.id}">${ticket.status === '已完成' ? '已完成' : '标记完成'}</button></div></article>`).join('')}</div>`;
       } else if (name === 'notifications') {
-        body.innerHTML = `<div class="workspace-notice"><i data-lucide="bell"></i><span><b>通知状态：</b>${unreadCount()} 条未读提醒，点击“标为已读”后会同步侧栏铃铛。</span><button class="quiet-button" id="read-all-notices" style="margin-left:auto">全部已读</button></div><article class="workspace-card"><div class="notice-list">${notificationsState.map(item => `<div class="notice-item ${item.unread ? 'unread' : ''}"><i data-lucide="${item.unread ? 'bell-ring' : 'check'}"></i><div><b>${escapeHtml(item.title)}</b><p>${escapeHtml(item.body)}</p><small>${escapeHtml(item.time)}</small></div>${item.unread ? `<button class="quiet-button" data-notice-read="${item.id}">标为已读</button>` : '<span class="status-chip approved">已读</span>'}</div>`).join('')}</div></article>`;
+        const notices = notificationsState.length
+          ? notificationsState.map(item => `<div class="notice-item ${item.unread ? 'unread' : ''}"><i data-lucide="${item.unread ? 'bell-ring' : 'check'}"></i><div><b>${escapeHtml(item.title)}</b><p>${escapeHtml(item.body)}</p><small>${escapeHtml(item.time)}</small></div>${item.unread ? `<button class="quiet-button" data-notice-read="${item.id}">标为已读</button>` : '<span class="status-chip approved">已读</span>'}</div>`).join('')
+          : '<p class="empty-state">暂无通知</p>';
+        body.innerHTML = `<article class="workspace-card"><div class="notice-list">${notices}</div></article>${notificationsState.some(item => item.unread) ? '<div class="workspace-actions"><button class="quiet-button" id="read-all-notices">全部已读</button></div>' : ''}`;
       } else if (name === 'audit') {
         body.innerHTML = `<div class="workspace-notice"><i data-lucide="history"></i><span><b>可恢复记录：</b>恢复操作只会把条目标记为候选，仍需人工审核后才能进入生产 RAG。</span></div><article class="workspace-card"><div class="audit-row" style="font-weight:700"><span>条目</span><span>动作</span><span>时间</span><span>操作</span></div>${auditState.map(item => `<div class="audit-row"><span>${escapeHtml(item.item)}<small style="display:block;color:var(--muted)">${escapeHtml(item.operator)}</small></span><span>${escapeHtml(item.action)}</span><span>${escapeHtml(item.time)}</span><span>${item.recoverable ? `<button class="quiet-button" data-audit-recover="${item.id}">恢复为候选</button>` : '<span class="status-chip archived">不可恢复</span>'}</span></div>`).join('')}</article>`;
       }
@@ -1015,9 +1134,9 @@
     }
     function openWorkspace(name) {
       if (name === 'workbench') { closeWorkspace(); return; }
-      // BrowserView is a native overlay, so hide it whenever a workspace
-      // module replaces the conversation surface.
-      if (window.rcbElectron?.closeXianyu) window.rcbElectron.closeXianyu().catch(() => {});
+      // The platform listener must remain alive while another workspace is
+      // visible. Hide the native overlay without destroying its WebContents.
+      if (window.rcbElectron?.hideXianyu) window.rcbElectron.hideXianyu().catch(() => {});
       const meta = workspaceMeta[name]; if (!meta) return;
       document.getElementById('workspace-title').textContent = meta.title;
       document.getElementById('workspace-subtitle').textContent = meta.subtitle;
@@ -1030,6 +1149,9 @@
       sidebar.classList.remove('open');
     }
     function closeWorkspace() {
+      globalThis.RcbWorkflowCanvas?.unmount?.();
+      document.getElementById('workspace-body').classList.remove('workflow-workspace');
+      document.getElementById('workspace-view').classList.remove('workflow-view');
       document.querySelector('.app-shell').classList.remove('workspace-open');
       document.querySelectorAll('.workspace-nav-item').forEach(item => item.classList.toggle('active', item.dataset.workspace === 'workbench'));
       const selected = firstConnectedPlatform(currentClientId);
@@ -1521,18 +1643,6 @@
         document.getElementById('workspace-mode').textContent = document.getElementById('mode-tag').textContent;
         renderWorkspace('safety'); return;
       }
-      const candidateReview = event.target.closest('[data-candidate-review]');
-      if (candidateReview) {
-        const candidate = candidateKnowledge[Number(candidateReview.dataset.candidateReview)];
-        if (candidate) candidate.status = '待人工审核';
-        try { localStorage.setItem('rcb-candidate-knowledge', JSON.stringify(candidateKnowledge)); } catch { /* Demo continues without local persistence. */ }
-        renderWorkspace('knowledge'); document.getElementById('knowledge-workspace-status').textContent = '已标记为待人工审核，仍不可用于生产 RAG。'; return;
-      }
-      if (event.target.closest('#knowledge-batch')) {
-        candidateKnowledge.forEach(item => { item.status = '待人工审核'; });
-        try { localStorage.setItem('rcb-candidate-knowledge', JSON.stringify(candidateKnowledge)); } catch { /* Demo continues without local persistence. */ }
-        renderWorkspace('knowledge'); document.getElementById('knowledge-workspace-status').textContent = '候选条目已批量标记待人工审核。';
-      }
       const toggle = event.target.closest('[data-store-toggle], [data-store-listen]');
       if (toggle) { const id = toggle.dataset.storeToggle || toggle.dataset.storeListen; const store = storesState.find(item => item.id === id); if (store) { store.listening = !store.listening; store.connected = store.listening; store.status = store.listening ? '已连接' : (store.platform === '闲鱼' ? '待登录' : '待授权'); saveState('rcb-stores', storesState); const platformId = Object.keys(platformStoreId).find(key => platformStoreId[key] === store.platform) || store.id; if (platformId !== 'xianyu') { platformConnectionState[platformId] = store.connected; platformConnectionMeta[platformId] = { label: store.connected ? '在线' : '未接入', listening: store.connected && store.listening }; renderPlatformConnectionStates(); } renderWorkspace('stores'); toast(`${store.name} 已${store.listening ? '开始' : '暂停'}监听`); } return; }
       const testStore = event.target.closest('[data-store-test]');
@@ -1755,6 +1865,7 @@
       updateRagStatus(`${status.model} · ${status.chunks} 段资料 · ${status.embeddingEnabled ? '向量检索已启用' : '关键词检索模式'} · ${status.webSearchReady ? '联网兜底已开启' : '仅本地知识库'}`, status.configured ? 'ready' : 'error');
     }).catch(() => { document.getElementById('training-status').textContent = 'RAG 待启动'; updateRagStatus('无法连接本地 RAG 服务', 'error'); });
     applyReplyMode(replyMode, { persist: false, sync: false, notify: false });
+    updateNotifyCount();
     loadPromptSettings().catch(() => { /* The local draft remains available until the service is ready. */ });
     fetch('/api/xianyu/status', { cache: 'no-store' }).then(response => response.ok ? response.json() : Promise.reject()).then(status => {
       if (status.replyMode) applyReplyMode(status.replyMode, { persist: true, sync: false, notify: false });

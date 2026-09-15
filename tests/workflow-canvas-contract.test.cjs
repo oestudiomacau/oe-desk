@@ -1,0 +1,48 @@
+const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
+const { join } = require('node:path');
+
+const root = join(__dirname, '..');
+const htmlSource = readFileSync(join(root, 'index.html'), 'utf8');
+const canvasSource = readFileSync(join(root, 'client', 'workflow-canvas.js'), 'utf8');
+const serverSource = readFileSync(join(root, 'server.js'), 'utf8');
+
+assert.match(htmlSource, /data-workspace="workflow"/, 'The workspace navigation must expose the workflow canvas.');
+assert.match(htmlSource, /\/client\/workflow-canvas\.js/, 'The workspace must load the workflow canvas client module.');
+assert.match(htmlSource, /globalThis\.RcbWorkflowCanvas\?\.mount\(body\)/, 'Opening the workflow workspace must mount the canvas.');
+assert.match(htmlSource, /workflow-workspace/, 'The canvas must opt out of the normal scrolling workspace layout.');
+assert.match(canvasSource, /globalThis\.RcbWorkflowCanvas/, 'The canvas module must export its workspace entry point.');
+assert.match(canvasSource, /rcb-workflow-canvas/, 'Workflow drafts must persist locally.');
+assert.match(canvasSource, /bindNodeDrag/, 'Workflow nodes must be draggable.');
+assert.match(canvasSource, /addEdge/, 'Workflow nodes must support graph connections.');
+assert.match(canvasSource, /fitToFlow/, 'The canvas must support fitting the graph into the viewport.');
+assert.match(canvasSource, /startPortConnection/, 'Nodes must support direct output-port to input-port connections.');
+assert.match(canvasSource, /canCreateEdge/, 'Connections must reject duplicate, terminal, and cycle-producing edges.');
+assert.match(canvasSource, /分支名称重复/, 'Condition validation must detect ambiguous duplicate branch labels.');
+assert.match(canvasSource, /autoLayout/, 'The canvas must provide automatic graph layout.');
+assert.match(canvasSource, /recordHistory/, 'The canvas must preserve an undo history for editing.');
+assert.match(canvasSource, /minimapMarkup/, 'The canvas must provide an overview minimap for navigation.');
+assert.match(htmlSource, /workflow-node-library/, 'The workspace must expose a categorised node library.');
+assert.match(htmlSource, /workflow-minimap/, 'The workspace must style its visual navigation minimap.');
+assert.match(canvasSource, /category: '自定义', custom: true/, 'The node library must include a user-configurable custom function node.');
+assert.match(canvasSource, /label: 'HTTP 请求'/, 'The node library must include common tool-call nodes.');
+assert.match(canvasSource, /label: '信息提取'/, 'The node library must include reusable AI processing nodes.');
+assert.match(canvasSource, /Object\.entries\(nodeTypes\)\.filter\(\(\[, metadata\]\) => metadata\.quick\)/, 'The compact top toolbar must show only common nodes instead of every catalog item.');
+assert.match(canvasSource, /<details class="workflow-node-group" open>/, 'Node categories must use a stable collapsible single-column layout.');
+assert.match(canvasSource, /mountedEditor\?\.destroy\(\)/, 'Remounting must remove old editor listeners.');
+assert.match(canvasSource, /evaluateFlow\(/, 'Validation must produce structured workflow results.');
+assert.match(canvasSource, /validation-errors/, 'Validation must render actionable errors, not only a status sentence.');
+assert.match(canvasSource, /流程未通过校验，不能标记为已启用配置/, 'Invalid workflows must not be enabled.');
+assert.doesNotMatch(canvasSource, /scale\(\$\{this\.view\.zoom\}\)/, 'The full canvas must not use rasterising CSS transform zoom.');
+assert.doesNotMatch(canvasSource, /<small>\$\{escapeHtml\(item\.title\)\}<\/small>/, 'Node-library buttons must not render the secondary description line.');
+assert.match(canvasSource, /\/api\/workflow\/config/, 'The canvas must load and persist the workflow used by the backend.');
+assert.match(canvasSource, /\/api\/workflow\/runtime/, 'The canvas must subscribe to real workflow execution state.');
+assert.match(canvasSource, /runtime-running/, 'The currently executing node must receive a visible running state.');
+assert.match(canvasSource, /runtime-completed/, 'Completed nodes must remain distinguishable during a run.');
+assert.match(canvasSource, /clearInterval\(this\.runtimePollTimer\)/, 'Unmounting the canvas must stop its runtime poller.');
+assert.match(serverSource, /workflow-config\.json/, 'Workflow configuration must persist under ignored local runtime data.');
+assert.match(serverSource, /\/api\/workflow\/config/, 'The server must expose the executable workflow configuration.');
+assert.match(serverSource, /\/api\/workflow\/runtime/, 'The server must expose real execution progress for the canvas.');
+assert.match(serverSource, /executeXianyuWorkflow\(/, 'Inbound Xianyu processing must execute the enabled visual workflow.');
+
+console.log('workflow canvas contract passed');

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OE DESK 闲鱼 RPA 桥接
 // @namespace    rcb.local
-// @version      0.7.7
+// @version      0.7.8
 // @description  在闲鱼聊天页监听买家消息，调用本地 RAG 工作流并把低风险 AI 回复发送回当前会话。
 // @match        https://www.goofish.com/*
 // @match        https://goofish.com/*
@@ -61,10 +61,22 @@ globalThis.OEDeskOutboundRouteGuard = OEDeskOutboundRouteGuard;
 // throttled. Coalesce direct pulses, but retain exactly one trailing pass when
 // an inbound mutation arrives during an in-flight scan.
 var OEDeskScanScheduler = globalThis.OEDeskScanScheduler || class OEDeskScanScheduler {
-  constructor() {
+  constructor(timeoutMs = 20000) {
     this.running = false;
     this.trailing = false;
     this.current = null;
+    this.timeoutMs = Math.max(25, Number(timeoutMs) || 20000);
+  }
+  runWithTimeout(scan) {
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(`scan exceeded ${this.timeoutMs}ms`);
+        error.code = 'SCAN_TIMEOUT';
+        reject(error);
+      }, this.timeoutMs);
+    });
+    return Promise.race([Promise.resolve().then(scan), timeout]).finally(() => clearTimeout(timer));
   }
   request(scan) {
     if (this.running) {
@@ -76,7 +88,7 @@ var OEDeskScanScheduler = globalThis.OEDeskScanScheduler || class OEDeskScanSche
       try {
         do {
           this.trailing = false;
-          await scan();
+          await this.runWithTimeout(scan);
         } while (this.trailing);
       } finally {
         this.running = false;
@@ -91,7 +103,7 @@ globalThis.OEDeskScanScheduler = OEDeskScanScheduler;
 if (typeof document !== 'undefined') (function () {
   'use strict';
 
-  const bridgeVersion = '0.7.7';
+  const bridgeVersion = '0.7.8';
 
   // Electron may reinject after SPA navigation or a watchdog tick. Keep a
   // single observer/heartbeat set per document so reinjection is idempotent.
@@ -134,6 +146,9 @@ if (typeof document !== 'undefined') (function () {
   let forwardedCount = 0;
   let lastForwardError = '';
   let lastHeartbeatStartedAt = 0;
+  let heartbeatBusy = false;
+  let lastSuccessfulScanAt = 0;
+  let scanRecoveryCount = 0;
   let lastCandidateStats = { raw: 0, unique: 0, outgoing: 0, invisible: 0, selected: 0 };
 
   const bridge = document.createElement('div');
@@ -144,10 +159,25 @@ if (typeof document !== 'undefined') (function () {
   function call(path, options = {}) {
     const method = options.method || 'GET';
     const body = options.body || '';
+    const timeoutMs = Math.max(1000, Number(options.timeout || 12000));
     if (typeof GM_xmlhttpRequest === 'function') return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({ method, url: `${API}${path}`, data: body, headers: { 'content-type': 'application/json' }, timeout: 12000, onload: response => { if (response.status < 200 || response.status >= 300) { let detail = ''; try { detail = JSON.parse(response.responseText || '{}').error || ''; } catch {} return reject(new Error(`HTTP ${response.status}${detail ? ` · ${detail}` : ''}`)); } try { resolve(JSON.parse(response.responseText || '{}')); } catch { reject(new Error('桥接响应不是 JSON')); } }, onerror: () => reject(new Error('无法连接本地服务')), ontimeout: () => reject(new Error('本地服务响应超时')) });
+      let settled = false;
+      const finish = callback => value => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        callback(value);
+      };
+      const accept = finish(resolve);
+      const fail = finish(reject);
+      // Electron's GM shim cannot cancel ipcRenderer.invoke, so enforce the
+      // deadline here as well as passing it to a real userscript manager.
+      const timer = setTimeout(() => fail(new Error('本地服务响应超时')), timeoutMs);
+      try {
+        GM_xmlhttpRequest({ method, url: `${API}${path}`, data: body, headers: { 'content-type': 'application/json' }, timeout: timeoutMs, onload: response => { if (response.status < 200 || response.status >= 300) { let detail = ''; try { detail = JSON.parse(response.responseText || '{}').error || ''; } catch {} return fail(new Error(`HTTP ${response.status}${detail ? ` · ${detail}` : ''}`)); } try { accept(JSON.parse(response.responseText || '{}')); } catch { fail(new Error('桥接响应不是 JSON')); } }, onerror: () => fail(new Error('无法连接本地服务')), ontimeout: () => fail(new Error('本地服务响应超时')) });
+      } catch (error) { fail(error); }
     });
-    return fetch(`${API}${path}`, { ...options, headers: { 'content-type': 'application/json', ...(options.headers || {}) } }).then(response => response.json().then(payload => { if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`); return payload; }));
+    return fetch(`${API}${path}`, { ...options, signal: options.signal || AbortSignal.timeout(timeoutMs), headers: { 'content-type': 'application/json', ...(options.headers || {}) } }).then(response => response.json().then(payload => { if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`); return payload; }));
   }
 
   function pageConversationId() {
@@ -696,6 +726,7 @@ if (typeof document !== 'undefined') (function () {
     refreshMessageMutationObserver();
     await scanConversationList();
     await scanMessages();
+    lastSuccessfulScanAt = Date.now();
   }
 
   function requestPlatformScan(reason = 'direct') {
@@ -703,7 +734,22 @@ if (typeof document !== 'undefined') (function () {
     return scanScheduler.request(async () => {
       if (!listening) return;
       await scanPlatform();
-    }).catch(error => { bridge.textContent = `OE DESK 桥接异常：${error.message}`; return false; });
+    }).catch(error => {
+      if (error?.code === 'SCAN_TIMEOUT') {
+        // A stuck local request used to leave scanBusy=true forever, so only a
+        // seller-side DOM mutation appeared to wake the listener. Release the
+        // stale pass and let the next Electron pulse perform a fresh scan.
+        scanBusy = false;
+        conversationListBusy = false;
+        scanRecoveryCount += 1;
+        lastForwardError = '扫描超时，已自动恢复';
+        observedConversationRoot = null;
+        observedMessageRoot = null;
+        setTimeout(() => requestPlatformScan('timeout-recovery'), 80);
+      }
+      bridge.textContent = `OE DESK 桥接异常：${error.message}`;
+      return false;
+    });
   }
 
   function scheduleScan(_reason = 'mutation') {
@@ -969,6 +1015,8 @@ if (typeof document !== 'undefined') (function () {
   }
 
   async function heartbeat() {
+    if (heartbeatBusy) return;
+    heartbeatBusy = true;
     lastHeartbeatStartedAt = Date.now();
     try {
       const loginForm = document.querySelector('#fm-sms-login-id, #fm-smscode, iframe[src*="mini_login"], [class*="login-form"], [class*="loginForm"]');
@@ -986,18 +1034,23 @@ if (typeof document !== 'undefined') (function () {
         || messageNodes().length > 0
       );
       const candidateCount = listening ? messageNodes().length : 0;
-      const result = await call('/listener', { method: 'POST', body: JSON.stringify({ connected: authenticated, sessionId, conversationId: updateConversationId(), pageUrl: location.href, chatUrl: location.href, diagnostics: { bridgeVersion, scanCount, forwardedCount, lastForwardError, candidateCount, candidateStats: lastCandidateStats, conversationCount: conversationRows().length, authenticated } }) });
+      const result = await call('/listener', { method: 'POST', body: JSON.stringify({ connected: authenticated, sessionId, conversationId: updateConversationId(), pageUrl: location.href, chatUrl: location.href, diagnostics: { bridgeVersion, scanCount, forwardedCount, lastForwardError, candidateCount, candidateStats: lastCandidateStats, conversationCount: conversationRows().length, authenticated, lastSuccessfulScanAt, scanRecoveryCount } }) });
       const nextListening = authenticated && Boolean(result.listening);
       const started = nextListening && !listening;
       listening = nextListening;
       if (started) {
         scanState.reset();
+        conversationListPrimed = false;
+        conversationSnapshots.clear();
+        pendingConversationOpens.length = 0;
+        pendingConversationIds.clear();
         // Prime immediately after enabling the listener so an operator's first
         // message cannot race the delayed interval scan and become baseline.
         requestPlatformScan('listener-start');
       }
       bridge.textContent = !authenticated ? 'OE DESK 未登录 · 等待登录' : nextListening ? `OE DESK 监听中 · ${currentConversationId.slice(0, 32)}` : 'OE DESK 已连接 · 监听暂停';
     } catch (error) { bridge.textContent = `本地服务未启动：${error.message}`; }
+    finally { heartbeatBusy = false; }
   }
 
   // The Electron host can invoke this pulse when Chromium throttles page

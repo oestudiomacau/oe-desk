@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('rcbElectron', {
   isElectron: true,
   openPlatform: (platform = 'xianyu', storeId = platform) => ipcRenderer.invoke('platform:open', { platform, storeId }),
   openXianyu: (storeId = 'default') => ipcRenderer.invoke('xianyu:open', { storeId }),
+  hideXianyu: () => ipcRenderer.invoke('xianyu:hide'),
   closeXianyu: () => ipcRenderer.invoke('xianyu:close'),
   layoutXianyu: () => ipcRenderer.invoke('xianyu:layout'),
   refreshXianyu: () => ipcRenderer.invoke('xianyu:refresh'),
