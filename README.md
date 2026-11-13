@@ -1,5 +1,9 @@
 # RAG Customer Service
 
+## Public AI chat
+
+The public visitor chat is deployed at [oestudiomacau.github.io/oe-desk](https://oestudiomacau.github.io/oe-desk/). Its static page is in `web-chat/public`; the DeepSeek credential stays in the server-side OE DESK Chat API and is never shipped to browsers.
+
 This project serves the customer-service UI and a local RAG API.
 
 ## What It Does
