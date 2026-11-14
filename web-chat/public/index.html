@@ -14,39 +14,53 @@
     .composer{padding:15px 20px 18px;border-top:1px solid var(--line);background:#fff}.composer-row{display:flex;gap:9px;max-width:760px;margin:auto}.composer textarea{width:100%;min-height:48px;max-height:130px;resize:none;padding:11px 13px;border:1px solid #cddbd1;border-radius:13px;outline:0;color:var(--ink);background:#fbfdfb}.composer textarea:focus{border-color:#72b894;box-shadow:0 0 0 3px #e2f4e8}.send{min-width:84px;border:0;border-radius:12px;color:#fff;background:var(--accent);font-weight:700}.send:hover{background:var(--accent-dark)}.send:disabled{cursor:wait;opacity:.55}.composer-foot{display:flex;justify-content:space-between;gap:10px;max-width:760px;margin:8px auto 0;color:var(--muted);font-size:10px}.clear{padding:0;border:0;color:var(--accent-dark);background:transparent;font-size:11px}.status{min-height:17px;color:#a34c44;font-size:11px;text-align:center}.privacy{padding:0 20px 18px;color:#8b958f;font-size:10px;text-align:center;background:#fff}.privacy a{color:var(--accent-dark)}
     @media(max-width:620px){.shell{width:100%;padding:0}.app{height:100vh;min-height:100vh;border:0;border-radius:0}.header-note{display:none}.messages{padding:18px 13px}.welcome{margin:8px auto 24px;padding:20px 15px}.welcome h1{font-size:21px}.bubble{max-width:calc(100vw - 85px)}.composer{padding:11px 12px 13px}.composer-row{gap:6px}.send{min-width:64px}.composer-foot{font-size:9px}}
     .app{grid-template-rows:auto minmax(0,1fr) auto auto}.retry{margin-left:8px;border:0;padding:0;color:var(--accent-dark);background:transparent;text-decoration:underline}.send:disabled{cursor:default}.chips button:focus-visible,.clear:focus-visible,.send:focus-visible{outline:3px solid #77b89c;outline-offset:3px}@media(max-width:620px){.app{height:100dvh;min-height:0}.shell{min-height:100dvh}}
-    .header-actions,.training-actions{display:flex;align-items:center;gap:12px}
-    .training-link{border:1px solid #cfe4d5;border-radius:10px;padding:6px 11px;background:var(--accent-soft);color:var(--accent-dark);font-size:12px;white-space:nowrap}
+    .shell{width:min(1240px,calc(100% - 28px));display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,360px);gap:16px;align-content:center;align-items:stretch}
     .reply-training{margin:5px 0 0;color:var(--accent-dark);font-size:11px;border:0;background:transparent;padding:4px 0;text-decoration:underline}
-    .training-dialog{width:min(480px,calc(100% - 28px));max-height:calc(100dvh - 28px);border:1px solid var(--line);border-radius:18px;padding:22px;color:var(--ink);box-shadow:var(--shadow)}
-    .training-dialog::backdrop{background:rgba(24,32,29,.4)}.training-dialog h2{margin:0;font-size:20px}.training-dialog p{margin:5px 0 14px;color:var(--muted);font-size:13px}
-    .training-dialog label{display:block;margin:12px 0 5px;font-size:13px;font-weight:700}.training-dialog textarea{display:block;width:100%;padding:8px 10px;border:1px solid #cddbd1;border-radius:9px;resize:vertical}
-    .training-actions{justify-content:flex-end;flex-wrap:wrap;margin-top:14px}.training-actions .send{padding:7px 12px}.training-dialog [role=status]{margin:7px 0 0}
+    .training-panel{min-width:0;min-height:0;max-height:max(620px,min(820px,calc(100vh - 56px)));overflow:auto;border:1px solid var(--line);border-radius:24px;padding:22px;background:var(--panel);box-shadow:var(--shadow)}
+    .training-panel h2{margin:0;font-size:19px}.training-panel p{margin:6px 0;color:var(--muted);font-size:12px}
+    .training-panel label,.training-label{display:block;margin:14px 0 5px;font-size:13px;font-weight:700}
+    .training-panel textarea,.training-panel select{display:block;width:100%;padding:8px 10px;border:1px solid #cddbd1;border-radius:9px;background:#fbfdfb;color:var(--ink)}
+    .training-panel textarea{resize:vertical}.training-panel select{font:inherit;font-size:13px}
+    .training-original{max-height:140px;overflow:auto;padding:8px 10px;border-radius:9px;background:var(--paper);font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
+    .training-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:14px}.training-actions .send{padding:7px 12px}
+    @media(max-width:780px){.shell{grid-template-columns:minmax(0,1fr);align-content:start;gap:10px}.app{height:72dvh;min-height:360px}.training-panel{max-height:none}}
+    @media(max-width:620px){.shell{width:100%}.training-panel{border-radius:0;padding:18px 15px}}
     @media(prefers-reduced-motion:reduce){.typing i{animation:none}}
   </style>
 </head>
 <body>
   <main class="shell"><section class="app" aria-label="OE DESK 在线客服">
-    <header><div class="brand"><div class="mark">OE</div><div><strong>OE DESK</strong><span>AI CUSTOMER SERVICE</span></div></div><div class="header-actions"><div class="header-note"><b>在线咨询</b><span>AI 会结合当前对话连续回答</span></div><button class="training-link" id="training-open" type="button">训练场</button></div></header>
+    <header><div class="brand"><div class="mark">OE</div><div><strong>OE DESK</strong><span>AI CUSTOMER SERVICE</span></div></div><div class="header-note"><b>在线咨询</b><span>AI 会结合当前对话连续回答</span></div></header>
     <section class="messages" id="messages" aria-live="polite"><div class="welcome" id="welcome"><h1>您好，想咨询什么？</h1><p>可以直接描述产品、升级需求、订单或售后问题，我会结合上下文继续帮您处理。</p><div class="chips"><button class="chip" type="button" data-prompt="我想升级刹车，有什么建议？">升级刹车</button><button class="chip" type="button" data-prompt="我想了解减震产品。">了解减震</button><button class="chip" type="button" data-prompt="我的订单需要售后处理。">订单售后</button></div></div></section>
     <form class="composer" id="composer"><div class="composer-row"><textarea id="question" aria-label="咨询内容" rows="1" maxlength="1200" placeholder="输入您的问题…" autocomplete="off"></textarea><button class="send" id="send" type="submit">发送</button></div><div class="composer-foot"><span>Enter 发送 · Shift + Enter 换行</span><button class="clear" id="clear" type="button">新对话</button></div><div class="status" id="status" role="status"></div></form><div class="privacy">对话会发送给 AI 服务处理，刷新页面即清除本机记录。请勿提交敏感信息。</div>
-  </section></main>
-  <dialog class="training-dialog" id="training-dialog" aria-labelledby="training-title">
+  </section>
+  <aside class="training-panel" id="training-panel" aria-labelledby="training-title">
     <form id="training-form">
       <h2 id="training-title">客服训练场</h2>
-      <p>测试客户问法，或直接提交建议答复。审核通过后，客服会参考它。请去除姓名、订单号和联系方式。</p>
+      <label for="training-turn">当前对话</label>
+      <select id="training-turn">
+        <option value="latest">跟随最新一轮</option>
+        <option value="manual">手动新增问答</option>
+      </select>
+      <p id="training-state" role="status">发送问题后，这里会显示 AI 的回复。</p>
+      <div id="training-original-group" hidden>
+        <div class="training-label">AI 原回复</div>
+        <div class="training-original" id="training-original" tabindex="0" aria-label="AI 原回复"></div>
+      </div>
       <label for="training-question">客户问法</label>
       <textarea id="training-question" rows="2" maxlength="600" required></textarea>
-      <label for="training-answer">建议答复</label>
-      <textarea id="training-answer" rows="5" maxlength="2000" required></textarea>
+      <label for="training-answer">训练答复</label>
+      <textarea id="training-answer" rows="6" maxlength="2000" required aria-describedby="training-privacy"></textarea>
+      <p id="training-privacy">保存后进入待审核列表。请去除姓名、订单号和联系方式。</p>
       <p id="training-result" role="status"></p>
       <div class="training-actions">
-        <button class="clear" type="button" id="training-close">关闭</button>
-        <button class="training-link" type="button" id="training-test">测试问题</button>
-        <button class="send" type="submit" id="training-submit">提交建议</button>
+        <button class="clear" type="button" id="training-test">测试这个问法</button>
+        <button class="send" type="submit" id="training-submit">保存训练内容</button>
       </div>
     </form>
-  </dialog>
+  </aside>
+  </main>
   <script src="chat-config.js"></script>
-  <script src="chat.js?v=training-1" defer></script>
+  <script src="chat.js?v=training-2" defer></script>
 </body>
 </html>
