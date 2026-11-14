@@ -36,10 +36,17 @@
       button.addEventListener('click', () => ask(retryQuestion, true)); status.append(button);
     }
   }
+  function cancel(request) {
+    if (!request.receipt) return;
+    void fetch(`${endpoint}/cancel`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(request.receipt), keepalive: true
+    }).catch(() => {});
+  }
   function stop() {
     if (!pending) return;
     generation += 1;
-    pending.controller.abort(); pending.typing.remove(); pending = null; setBusy(false);
+    pending.controller.abort(); cancel(pending); pending.typing.remove(); pending = null; setBusy(false);
     retryQuestion = '';
     status.textContent = '已停止，可以继续提问。';
   }
@@ -48,23 +55,37 @@
     if (!value || pending) return;
     const id = ++generation;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort('timeout'), 45000);
+    const timer = setTimeout(() => controller.abort('timeout'), 150000);
     status.textContent = ''; retryQuestion = value;
     if (!retry) { addMessage('user', value); history.push({ role: 'user', content: value }); }
     const typing = addMessage('assistant', '正在思考…');
-    pending = { controller, typing }; setBusy(true); question.value = ''; autosize();
+    const request = { controller, typing, receipt: null };
+    pending = request; setBusy(true); question.value = ''; autosize();
     try {
-      const response = await fetch(endpoint, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ question: value, history: history.slice(0, -1).slice(-24) }), signal: controller.signal
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(response.status === 429 ? '咨询较多，请稍等一分钟再试。' : payload.error || '客服暂时不可用。');
+      async function post(url, body) {
+        const response = await fetch(url, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body), signal: controller.signal
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || '客服暂时不可用。');
+        return payload;
+      }
+      let payload = await post(endpoint, { question: value, history: history.slice(0, -1).slice(-24) });
+      if (payload.jobId && payload.receiptToken) {
+        request.receipt = { jobId: payload.jobId, receiptToken: payload.receiptToken };
+        while (payload.state === 'queued' || payload.state === 'processing') {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          controller.signal.throwIfAborted();
+          payload = await post(`${endpoint}/result`, request.receipt);
+        }
+      }
       const answer = String(payload.answer || '').trim().replace(/#{2,3}/g, '\n\n');
       if (!answer) throw new Error('暂时没有生成回复。');
       if (id !== generation) return;
       typing.remove(); addMessage('assistant', answer); history.push({ role: 'assistant', content: answer }); retryQuestion = '';
     } catch (error) {
+      cancel(request);
       if (id !== generation) return;
       typing.remove(); showFailure(controller.signal.aborted ? '响应时间较长，请稍后重试。' : error instanceof TypeError ? '暂时无法连接客服，请检查网络后重试。' : error.message);
     } finally {

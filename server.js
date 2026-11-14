@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { startPublicChatConnector } from './server/public-chat-connector.js';
 import { extname, join, resolve } from 'node:path';
 import { importKnowledgeFiles, listImportedKnowledgeFiles, updateImportedKnowledgeFile, deleteImportedKnowledgeFile } from './server/knowledge-import.js';
 import { coalescePendingXianyuMessages, splitXianyuReplyForDelivery, supersedeQueuedAutoReplies } from './server/xianyu-message-queue.js';
@@ -208,6 +209,7 @@ async function saveXianyuState() {
 }
 
 function xianyuPlatformName(platform = 'xianyu') {
+  if (platform === 'web') return '网页客服';
   return platform === 'douyin' ? '抖音' : platform === 'tmall' ? '天猫' : '闲鱼';
 }
 
@@ -877,8 +879,13 @@ async function readJson(request) {
 const mimeTypes = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
 
 async function serveStatic(request, response, pathname) {
-  const requested = pathname === '/' ? '/index.html' : pathname;
-  const path = resolve(root, `.${decodeURIComponent(requested)}`);
+  const requested = pathname === '/' ? '/index.html' : decodeURIComponent(pathname);
+  if (requested !== '/index.html' && !/^\/(?:client|rpa)\/[\w.-]+\.js$/.test(requested)) {
+    response.writeHead(404);
+    response.end('Not found');
+    return;
+  }
+  const path = resolve(root, `.${requested}`);
   if (!path.startsWith(root) || (await stat(path).catch(() => null))?.isDirectory()) { response.writeHead(404); response.end('Not found'); return; }
   try {
     const content = await readFile(path);
@@ -894,6 +901,7 @@ await loadKnowledge();
 await loadXianyuState();
 await loadPromptSettings();
 await loadWorkflowConfig();
+let publicChatConnector;
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
   try {
@@ -903,6 +911,10 @@ const server = createServer(async (request, response) => {
       response.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS');
       response.setHeader('access-control-allow-headers', 'content-type');
       if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return; }
+    }
+    if (request.method === 'GET' && url.pathname === '/api/public-chat/status') {
+      if (!isLocalRequest(request)) { sendJson(response, 403, { error: 'Status is available only from localhost.' }); return; }
+      sendJson(response, 200, publicChatConnector?.status || { configured: false, connected: false, processing: false }); return;
     }
     if (request.method === 'GET' && url.pathname === '/api/health') {
       sendJson(response, 200, { status: 'ok', provider: config.provider, model: activeChatModel(), chunks: knowledgeChunks.length, vectorIndexReady: Boolean(vectorIndex), embeddingEnabled: config.embeddingEnabled, webSearchEnabled: config.webSearchEnabled, webSearchReady: config.webSearchEnabled && Boolean(config.tavilyApiKey), promptSettingsPersisted, promptSettingsRevision: promptSettingsRevision(), configured: config.provider !== 'openai' || Boolean(config.openaiApiKey) }); return;
@@ -1129,7 +1141,12 @@ const server = createServer(async (request, response) => {
   }
 }).listen(config.port, '127.0.0.1', () => {
   console.log(`OE DESK RAG service: http://localhost:${config.port}`);
+  publicChatConnector = startPublicChatConnector({
+    configPath: join(localDataDir, 'public-chat-connector.json'),
+    answer: answerQuestion
+  });
   if (xianyuState.listening) {
     scheduleReceivedXianyuMessages(0).catch(error => console.error('Xianyu startup pipeline failed:', error));
   }
 });
+server.on('close', () => publicChatConnector?.stop());
