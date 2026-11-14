@@ -1,6 +1,25 @@
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { setTimeout as pause } from 'node:timers/promises';
+import { promisify } from 'node:util';
+import { EnvHttpProxyAgent, ProxyAgent } from 'undici';
+
+const execFileAsync = promisify(execFile);
+
+async function connectorDispatcher(endpoint) {
+  if (process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy) {
+    return new EnvHttpProxyAgent();
+  }
+  if (process.platform !== 'win32') return undefined;
+  const { stdout } = await execFileAsync('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    '$uri = [uri]$env:OE_PUBLIC_CHAT_ENDPOINT; [System.Net.WebRequest]::GetSystemWebProxy().GetProxy($uri).AbsoluteUri'
+  ], { env: { ...process.env, OE_PUBLIC_CHAT_ENDPOINT: endpoint.href }, windowsHide: true, timeout: 5000 })
+    .catch(() => ({ stdout: '' }));
+  const proxy = stdout.trim();
+  return proxy && proxy !== endpoint.href ? new ProxyAgent(proxy) : undefined;
+}
 
 // Outbound HTTPS only. No local management port or private source material
 // is exposed. Only the generated customer answer leaves the desktop.
@@ -9,6 +28,7 @@ export function startPublicChatConnector({ configPath, answer, fetchImpl = fetch
   const status = { configured: false, connected: false, processing: false };
   const signal = controller.signal;
   let heartbeat;
+  let dispatcher;
   const done = (async () => {
     let config;
     try { config = JSON.parse(await readFile(configPath, 'utf8')); }
@@ -19,11 +39,13 @@ export function startPublicChatConnector({ configPath, answer, fetchImpl = fetch
       if (typeof config.token !== 'string' || !/^[a-f0-9]{64}$/.test(config.token)) throw new Error('Invalid credentials');
       const instanceId = randomUUID();
       status.configured = true;
+      if (fetchImpl === fetch) dispatcher = await connectorDispatcher(url);
       const post = async (path, body) => {
         const response = await fetchImpl(new URL(path, url), {
           method: 'POST', headers: { authorization: `Bearer ${config.token}`, 'content-type': 'application/json' },
           body: JSON.stringify({ ...body, instanceId }),
           redirect: 'error',
+          ...(dispatcher && { dispatcher }),
           signal: AbortSignal.any([signal, AbortSignal.timeout(15000)])
         });
         if (!response.ok) throw new Error(`Gateway status ${response.status}`);
@@ -72,7 +94,12 @@ export function startPublicChatConnector({ configPath, answer, fetchImpl = fetch
       }
     } catch {
       if (!signal.aborted) console.error('Public chat connector stopped; check local connector configuration.');
-    } finally { clearInterval(heartbeat); status.connected = false; status.processing = false; }
+    } finally {
+      clearInterval(heartbeat);
+      status.connected = false;
+      status.processing = false;
+      await dispatcher?.close();
+    }
   })();
   return { status, done, stop() { controller.abort(); clearInterval(heartbeat); } };
 }

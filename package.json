@@ -10,6 +10,7 @@
     "electron": "electron electron/main.cjs"
   },
   "dependencies": {
+    "undici": "^6.29.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
