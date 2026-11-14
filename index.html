@@ -749,6 +749,7 @@
   <div class="modal-backdrop" id="training-modal"><section class="training-modal" aria-label="客服训练场"><header class="training-header"><i data-lucide="flask-conical"></i><div class="training-header-title"><h2>客服训练场</h2><p>以客户身份测试回答，将可复用内容沉淀为待审核知识草案</p></div><span class="tag" id="training-status">RAG 检索</span><button class="icon-btn" id="close-training" title="关闭训练场"><i data-lucide="x"></i></button></header><div class="training-grid"><section class="training-chat"><div class="training-toolbar"><span>你正在扮演客户</span><button class="training-platform active" data-training-platform="tmall">天猫客户</button><button class="training-platform" data-training-platform="douyin">抖音客户</button></div><div class="training-messages" id="training-messages"><div class="training-empty" id="training-empty"><div><i data-lucide="message-square-more"></i><p>输入一个真实客户会问的问题，开始测试客服回答。</p></div></div></div><form class="training-composer" id="training-composer"><input id="training-input" autocomplete="off" placeholder="例如：2024 款 XMAX 300 能装 VD 350MM 吗？" /><button class="send-btn" title="发送测试问题" type="submit"><i data-lucide="arrow-up"></i></button></form></section><aside class="training-review"><span class="context-kicker">TRAINING REVIEW</span><h3>本轮改进草案</h3><p class="training-review-note">由模型结合已检索资料生成，不会自动改写正式知识。</p><div class="draft-empty" id="draft-empty">开始一轮测试后，这里会生成意图、风险提示和建议补充的知识条目。</div><div id="training-draft" hidden><div class="draft-field"><span>识别意图</span><strong id="draft-intent">--</strong></div><div class="draft-field"><span>建议知识标题</span><strong id="draft-title">--</strong></div><div class="draft-field"><span>待审核补充</span><p id="draft-content">--</p></div><div class="draft-actions"><button id="discard-draft" type="button">丢弃</button><button class="primary" id="apply-draft" type="button">写入知识库草稿</button></div><div class="draft-status" id="draft-status"></div></div></aside></div></section></div>
   <div class="toast-tip" id="toast-tip" role="status" aria-live="polite"></div>
   <script src="/client/import-manager.js"></script>
+  <script src="/client/public-chat-review.js" defer></script>
   <script src="/client/prompt-skill-manager.js"></script>
   <script src="/client/workflow-canvas.js"></script>
   <script>
@@ -1828,6 +1829,12 @@
     });
     const trainingModal = document.getElementById('training-modal');
     document.getElementById('training-button').addEventListener('click', () => { trainingModal.classList.add('open'); document.getElementById('training-input').focus(); sidebar.classList.remove('open'); });
+    document.addEventListener('public-chat-review-open', () => {
+      window.rcbElectron?.hideXianyu?.()?.catch(() => {});
+    });
+    document.addEventListener('public-chat-review-close', () => {
+      if (currentClientId && !document.querySelector('.app-shell')?.classList.contains('workspace-open')) activatePlatform(currentClientId);
+    });
     document.getElementById('close-training').addEventListener('click', () => trainingModal.classList.remove('open'));
     trainingModal.addEventListener('click', event => { if (event.target === trainingModal) trainingModal.classList.remove('open'); });
     document.querySelectorAll('.training-platform').forEach(button => button.addEventListener('click', () => {

@@ -30,6 +30,7 @@ export function startPublicChatConnector({ configPath, answer, fetchImpl = fetch
   const signal = controller.signal;
   let heartbeat;
   let dispatcher;
+  let sendRequest;
   const done = (async () => {
     let config;
     try { config = JSON.parse(await readFile(configPath, 'utf8')); }
@@ -52,6 +53,7 @@ export function startPublicChatConnector({ configPath, answer, fetchImpl = fetch
         if (!response.ok) throw new Error(`Gateway status ${response.status}`);
         return response.json();
       };
+      sendRequest = post;
       let beating = false;
       const beat = async () => {
         if (beating || signal.aborted) return;
@@ -103,5 +105,12 @@ export function startPublicChatConnector({ configPath, answer, fetchImpl = fetch
       await dispatcher?.close();
     }
   })();
-  return { status, done, stop() { controller.abort(); clearInterval(heartbeat); } };
+  return {
+    status, done,
+    async training(action, body = {}) {
+      if (!sendRequest || signal.aborted) throw new Error('网页客服连接尚未就绪。');
+      return sendRequest(`/api/connector/training/${action}`, body);
+    },
+    stop() { controller.abort(); clearInterval(heartbeat); }
+  };
 }

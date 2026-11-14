@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { publicChatChannelRules, startPublicChatConnector } from './server/public-chat-connector.js';
+import { createPublicChatReview, savePublicChatReviewMarkdown } from './server/public-chat-review.js';
 import { extname, join, resolve } from 'node:path';
 import { importKnowledgeFiles, listImportedKnowledgeFiles, updateImportedKnowledgeFile, deleteImportedKnowledgeFile } from './server/knowledge-import.js';
 import { coalescePendingXianyuMessages, splitXianyuReplyForDelivery, supersedeQueuedAutoReplies } from './server/xianyu-message-queue.js';
@@ -903,6 +904,13 @@ await loadXianyuState();
 await loadPromptSettings();
 await loadWorkflowConfig();
 let publicChatConnector;
+const reviewPublicChat = createPublicChatReview({
+  connector: () => publicChatConnector,
+  isLocalRequest, readJson, sendJson,
+  saveAnswer: suggestion => savePublicChatReviewMarkdown({ root, suggestion, reload: async () => {
+    vectorIndex = null; vectorIndexPromise = null; await loadKnowledge();
+  } })
+});
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
   try {
@@ -912,6 +920,9 @@ const server = createServer(async (request, response) => {
       response.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS');
       response.setHeader('access-control-allow-headers', 'content-type');
       if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return; }
+    }
+    if (url.pathname === '/api/public-chat/training') {
+      await reviewPublicChat(request, response); return;
     }
     if (request.method === 'GET' && url.pathname === '/api/public-chat/status') {
       if (!isLocalRequest(request)) { sendJson(response, 403, { error: 'Status is available only from localhost.' }); return; }

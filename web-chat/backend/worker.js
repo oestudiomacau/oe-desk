@@ -1,6 +1,7 @@
 const allowedOrigins = new Set(['https://oestudiomacau.github.io', 'http://localhost:3000', 'http://127.0.0.1:3000']);
 const freshnessMs = 30000;
 const lifetimeMs = 180000;
+const suggestionLifetimeMs = 30 * 86400000;
 
 function json(value, status = 200, origin = '') {
   return Response.json(value, { status, headers: {
@@ -43,6 +44,7 @@ async function authorized(request, secret) {
   return difference === 0;
 }
 const clean = (value, limit) => typeof value === 'string' ? value.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, limit) : '';
+const cleanAnswer = value => typeof value === 'string' ? value.replace(/[\u0000-\u0008\u000b-\u001f]/g, '').trim().slice(0, 2000) : '';
 function cleanHistory(value) {
   return (Array.isArray(value) ? value.slice(-24) : []).filter(item => ['user', 'assistant'].includes(item?.role))
     .map(item => ({ role: item.role, content: clean(item.content, 1200) })).filter(item => item.content);
@@ -71,7 +73,49 @@ export default {
       let input;
       try { input = await readInput(request); } catch { return json({ error: '消息格式无效或内容过长。' }, 400, origin); }
 
+      if (path === '/api/training/suggestions') {
+        const question = clean(input?.question, 600);
+        const answer = cleanAnswer(input?.answer);
+        if (!question || !answer) return json({ error: '请填写客户问题和建议答复。' }, 400, origin);
+        const day = Math.floor(now / 86400000);
+        const visitor = await hash(`${env.LOCAL_CONNECTOR_TOKEN}:${request.headers.get('cf-connecting-ip') || 'anonymous'}`);
+        const rateKey = `training:${visitor}:${day}`;
+        const id = await hash(JSON.stringify([rateKey, question, answer]));
+        if (await db.prepare('SELECT id FROM training_suggestions WHERE id=?').bind(id).first()) return json({ state: 'pending' }, 202, origin);
+        const [, , rate, inserted] = await db.batch([
+          db.prepare('DELETE FROM training_suggestions WHERE created_at <= ?').bind(now - suggestionLifetimeMs),
+          db.prepare('DELETE FROM chat_rate WHERE expires_at <= ?').bind(now),
+          db.prepare(`INSERT INTO chat_rate (id, count, expires_at) VALUES (?, 1, ?)
+            ON CONFLICT(id) DO UPDATE SET count=count+1 WHERE count < 12 RETURNING count`)
+            .bind(rateKey, (day + 1) * 86400000),
+          db.prepare(`INSERT INTO training_suggestions (id, question, answer, created_at)
+            SELECT ?, ?, ?, ? WHERE changes() > 0 AND (SELECT COUNT(*) FROM training_suggestions) < 500
+            ON CONFLICT(id) DO NOTHING RETURNING id`).bind(id, question, answer, now)
+        ]);
+        if (!rate.results.length) return json({ error: '今天提交的建议已达上限，请明天再试。' }, 429, origin);
+        if (!inserted.results.length && !await db.prepare('SELECT id FROM training_suggestions WHERE id=?').bind(id).first()) {
+          return json({ error: '待审核建议较多，请稍后再提交。' }, 429, origin);
+        }
+        return json({ state: 'pending' }, 202, origin);
+      }
+
       if (connectorRoute) {
+        if (path === '/api/connector/training/list') {
+          const { results } = await db.prepare(`SELECT id, question, answer, created_at AS createdAt FROM training_suggestions
+            WHERE created_at > ? ORDER BY created_at, id LIMIT 25`).bind(now - suggestionLifetimeMs).all();
+          return json({ suggestions: results }, 200, origin);
+        }
+        if (path === '/api/connector/training/get' || path === '/api/connector/training/remove') {
+          const id = input?.id;
+          if (typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id)) return json({ error: 'Invalid suggestion' }, 400, origin);
+          if (path.endsWith('/remove')) {
+            await db.prepare('DELETE FROM training_suggestions WHERE id=?').bind(id).run();
+            return json({ removed: true }, 200, origin);
+          }
+          const suggestion = await db.prepare('SELECT id, question, answer FROM training_suggestions WHERE id=? AND created_at > ?')
+            .bind(id, now - suggestionLifetimeMs).first();
+          return json({ suggestion }, 200, origin);
+        }
         const instance = clean(input?.instanceId, 100);
         if (!/^[a-zA-Z0-9-]{16,100}$/.test(instance)) return json({ error: 'Invalid instance' }, 400, origin);
         if (path === '/api/connector/heartbeat') {

@@ -1,5 +1,6 @@
 (() => {
-  const endpoint = `${String(window.OE_DESK_CHAT_API || '').replace(/\/$/, '')}/api/chat`;
+  const api = String(window.OE_DESK_CHAT_API || '').replace(/\/$/, '');
+  const endpoint = `${api}/api/chat`;
   const messages = document.getElementById('messages');
   const welcome = document.getElementById('welcome');
   const composer = document.getElementById('composer');
@@ -7,6 +8,12 @@
   const send = document.getElementById('send');
   const clear = document.getElementById('clear');
   const status = document.getElementById('status');
+  const training = document.getElementById('training-dialog');
+  const trainingForm = document.getElementById('training-form');
+  const trainingQuestion = document.getElementById('training-question');
+  const trainingAnswer = document.getElementById('training-answer');
+  const trainingResult = document.getElementById('training-result');
+  const trainingSubmit = document.getElementById('training-submit');
   const history = [];
   let pending = null;
   let generation = 0;
@@ -28,6 +35,7 @@
     send.textContent = value ? '停止' : '发送';
     send.setAttribute('aria-label', value ? '停止生成回复' : '发送问题');
     question.readOnly = value;
+    document.getElementById('training-test').disabled = value;
   }
   function showFailure(text) {
     status.replaceChildren(document.createTextNode(text));
@@ -83,7 +91,20 @@
       const answer = String(payload.answer || '').trim().replace(/#{2,3}/g, '\n\n');
       if (!answer) throw new Error('暂时没有生成回复。');
       if (id !== generation) return;
-      typing.remove(); addMessage('assistant', answer); history.push({ role: 'assistant', content: answer }); retryQuestion = '';
+      typing.remove();
+      const message = addMessage('assistant', answer);
+      const improve = document.createElement('button');
+      improve.type = 'button'; improve.className = 'reply-training'; improve.textContent = '改进这条答复';
+      improve.addEventListener('click', () => {
+        if (trainingSubmit.disabled) return;
+        trainingQuestion.value = value.slice(0, 600);
+        trainingAnswer.value = answer.slice(0, 2000);
+        trainingResult.textContent = '';
+        training.showModal();
+        trainingAnswer.focus();
+      });
+      message.lastElementChild.append(improve);
+      history.push({ role: 'assistant', content: answer }); retryQuestion = '';
     } catch (error) {
       cancel(request);
       if (id !== generation) return;
@@ -93,6 +114,38 @@
       if (id === generation) { pending = null; setBusy(false); question.focus(); }
     }
   }
+  document.getElementById('training-open').addEventListener('click', () => training.showModal());
+  document.getElementById('training-close').addEventListener('click', () => training.close());
+  document.getElementById('training-test').addEventListener('click', () => {
+    const value = trainingQuestion.value.trim();
+    if (!value || pending) { trainingQuestion.focus(); return; }
+    trainingResult.textContent = '';
+    training.close();
+    ask(value);
+  });
+  trainingForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    const draft = { question: trainingQuestion.value.trim(), answer: trainingAnswer.value.trim() };
+    if (!draft.question || !draft.answer || trainingSubmit.disabled) return;
+    trainingSubmit.disabled = true;
+    trainingQuestion.readOnly = trainingAnswer.readOnly = true;
+    trainingResult.textContent = '正在提交…';
+    try {
+      const response = await fetch(`${api}/api/training/suggestions`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(draft), signal: AbortSignal.timeout(15000)
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.state !== 'pending') throw new Error(payload.error || '提交失败，请稍后重试。');
+      trainingForm.reset();
+      trainingResult.textContent = '建议已提交，等待审核。';
+    } catch (error) {
+      trainingResult.textContent = error instanceof TypeError || error.name === 'TimeoutError' ? '暂时无法连接，请稍后重试。' : error.message;
+    } finally {
+      trainingSubmit.disabled = false;
+      trainingQuestion.readOnly = trainingAnswer.readOnly = false;
+    }
+  });
   composer.addEventListener('submit', event => { event.preventDefault(); if (pending) stop(); else ask(question.value); });
   question.addEventListener('input', autosize);
   question.addEventListener('keydown', event => {
