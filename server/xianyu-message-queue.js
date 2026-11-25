@@ -58,17 +58,55 @@ export function supersedeQueuedAutoReplies(sent, messages, conversationId, super
   return superseded;
 }
 
-// `###` is a deliberate two-message separator for AI replies. Only the first
-// marker splits the delivery; remaining markers become line breaks so one AI
-// response can never expand into an unbounded send burst.
+export function expireStaleXianyuRuntimeWork(messages, sent, now = Date.now()) {
+  if (!Array.isArray(messages) || !Array.isArray(sent)) return 0;
+  let changed = 0;
+  const expiredReplyIds = new Set();
+  for (const reply of sent) {
+    if (reply?.direction !== 'out' || reply.delivery !== 'queued') continue;
+    Object.assign(reply, {
+      delivery: 'superseded',
+      releaseReason: 'previous-runtime-expired',
+      supersededAt: new Date(now).toISOString(),
+      updatedAtMs: now,
+      updatedAt: new Date(now).toISOString()
+    });
+    expiredReplyIds.add(reply.id);
+    changed += 1;
+  }
+  for (const message of messages) {
+    if (message?.direction !== 'in') continue;
+    const unfinishedInbound = ['received', 'processing'].includes(message.status);
+    const expiredSource = message.replyId && expiredReplyIds.has(message.replyId);
+    if (!unfinishedInbound && !expiredSource) continue;
+    Object.assign(message, {
+      status: 'superseded',
+      handled: true,
+      error: null,
+      retryAt: null,
+      supersededBy: 'runtime-restart',
+      supersededAt: new Date(now).toISOString(),
+      updatedAtMs: now,
+      updatedAt: new Date(now).toISOString()
+    });
+    changed += 1;
+  }
+  return changed;
+}
+
+// `##` is the current two-message separator; `###` remains compatible with
+// older prompts. Only the first marker splits so one reply cannot create an
+// unbounded send burst.
 export function splitXianyuReplyForDelivery(text) {
   const normalized = String(text || '').trim();
   if (!normalized) return [];
-  const splitAt = normalized.indexOf('###');
-  if (splitAt < 0) return [normalized];
+  const marker = normalized.match(/#{2,3}/)?.[0];
+  if (!marker) return [normalized];
+  const splitAt = normalized.indexOf(marker);
+  const cleanRemainingMarkers = value => value.replace(/#{2,3}/g, '\n').trim();
   const parts = [
     normalized.slice(0, splitAt).trim(),
-    normalized.slice(splitAt + 3).replaceAll('###', '\n').trim()
+    cleanRemainingMarkers(normalized.slice(splitAt + marker.length))
   ].filter(Boolean);
-  return parts.length === 2 ? parts : [normalized.replaceAll('###', '\n').trim()];
+  return parts.length === 2 ? parts : [cleanRemainingMarkers(normalized)];
 }

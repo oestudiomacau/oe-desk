@@ -5,28 +5,36 @@ const executableNodeTypes = new Set([
 
 const terminalNodeTypes = new Set(['reply', 'handoff', 'stop']);
 const branchingNodeTypes = new Set(['condition', 'classifier']);
+const WORKFLOW_SCHEMA_VERSION = 2;
 
 export function createDefaultWorkflowState() {
   return {
-    version: 1,
+    version: WORKFLOW_SCHEMA_VERSION,
     activeFlowId: 'default-customer-reply',
     flows: [{
       id: 'default-customer-reply',
-      name: '客户消息自动处理',
-      description: '对收到的客户消息进行检索、风险判断，并路由至回复或人工队列。',
+      name: 'AI 智能自动回复',
+      description: '收到客户消息后识别意图，按商品、适配、售后或通用咨询检索资料并自动回复。',
       enabled: true,
       nodes: [
-        { id: 'default-trigger', type: 'trigger', title: '收到平台消息', description: '从已接入的店铺接收买家消息。', x: 320, y: 620, config: { channel: '所有已接入店铺', event: '收到新买家消息' } },
-        { id: 'default-rag', type: 'rag', title: 'RAG 检索与答复', description: '结合本地资料、提示词和启用的技能生成答复草稿。', x: 650, y: 620, config: { strategy: '本地 RAG 优先', prompt: '' } },
-        { id: 'default-condition', type: 'condition', title: '风险与证据判断', description: '按风险等级和检索证据决定回复或转人工。', x: 980, y: 620, config: { condition: '低风险且命中资料', otherwise: '转人工' } },
-        { id: 'default-reply', type: 'reply', title: '提交回复草稿', description: '把生成结果交给人工确认或写入发送队列。', x: 1320, y: 470, config: { mode: '人工确认后发送', template: '' } },
-        { id: 'default-handoff', type: 'handoff', title: '转入人工队列', description: '整理问题和证据边界后交给相应人工队列。', x: 1320, y: 780, config: { queue: '人工确认', note: '' } }
+        { id: 'default-trigger', type: 'trigger', title: '收到客户消息', description: '在后台持续接收已接入店铺的新客户消息。', x: 220, y: 700, config: { channel: '所有已接入店铺', event: '收到新买家消息' } },
+        { id: 'default-classifier', type: 'classifier', title: '识别客户意图', description: '将消息分为商品咨询、车型适配、订单售后或其他问题。', x: 540, y: 700, config: { labels: '商品咨询\n车型适配\n订单售后\n其他', fallback: '进入其他分支' } },
+        { id: 'default-product-rag', type: 'rag', title: '商品咨询答复', description: '检索商品资料并直接回答规格、功能、价格等咨询。', x: 900, y: 320, config: { strategy: '本地 RAG 优先', prompt: '优先回答客户当前问题；动态价格或库存无法确认时，简洁说明以商品页面为准，不要只回复“转人工”。' } },
+        { id: 'default-fitment-rag', type: 'rag', title: '车型适配答复', description: '结合车型、年份与商品资料回答适配和安装问题。', x: 900, y: 580, config: { strategy: '本地 RAG 优先', prompt: '先回答已确认部分；信息不足时主动询问车型、年份、版本或安装规格，给客户明确的下一步，不要只回复“人工核验”。' } },
+        { id: 'default-after-sales-rag', type: 'rag', title: '订单售后答复', description: '识别订单和售后诉求，提供可执行的补充信息指引。', x: 900, y: 840, config: { strategy: '本地 RAG 优先', prompt: '说明可确认的售后规则；缺少订单信息时请客户提供订单号、问题照片或当前状态，不要编造处理结果。' } },
+        { id: 'default-general-rag', type: 'rag', title: '通用问题答复', description: '处理未归类问题并生成自然、简洁的客户回复。', x: 900, y: 1100, config: { strategy: '本地 RAG 优先', prompt: '直接回应客户问题；资料不足时提出一个最有帮助的补充问题，避免机械重复“请人工核验”。' } },
+        { id: 'default-reply', type: 'reply', title: '自动发送回复', description: '将生成结果写入对应会话的安全发送队列。', x: 1320, y: 700, config: { mode: 'AI 全托管队列', template: '' } }
       ],
       edges: [
-        { id: 'default-edge-trigger-rag', from: 'default-trigger', to: 'default-rag', label: '' },
-        { id: 'default-edge-rag-condition', from: 'default-rag', to: 'default-condition', label: '' },
-        { id: 'default-edge-condition-reply', from: 'default-condition', to: 'default-reply', label: '低风险' },
-        { id: 'default-edge-condition-handoff', from: 'default-condition', to: 'default-handoff', label: '需核对' }
+        { id: 'default-edge-trigger-classifier', from: 'default-trigger', to: 'default-classifier', label: '' },
+        { id: 'default-edge-classifier-product', from: 'default-classifier', to: 'default-product-rag', label: '商品咨询' },
+        { id: 'default-edge-classifier-fitment', from: 'default-classifier', to: 'default-fitment-rag', label: '车型适配' },
+        { id: 'default-edge-classifier-after-sales', from: 'default-classifier', to: 'default-after-sales-rag', label: '订单售后' },
+        { id: 'default-edge-classifier-general', from: 'default-classifier', to: 'default-general-rag', label: '其他' },
+        { id: 'default-edge-product-reply', from: 'default-product-rag', to: 'default-reply', label: '' },
+        { id: 'default-edge-fitment-reply', from: 'default-fitment-rag', to: 'default-reply', label: '' },
+        { id: 'default-edge-after-sales-reply', from: 'default-after-sales-rag', to: 'default-reply', label: '' },
+        { id: 'default-edge-general-reply', from: 'default-general-rag', to: 'default-reply', label: '' }
       ]
     }]
   };
@@ -47,7 +55,7 @@ function cleanConfig(value) {
 
 export function normalizeWorkflowState(input) {
   if (!input || !Array.isArray(input.flows)) return createDefaultWorkflowState();
-  const flows = input.flows.slice(0, 20).map((flow, flowIndex) => {
+  let flows = input.flows.slice(0, 20).map((flow, flowIndex) => {
     const nodes = Array.isArray(flow?.nodes) ? flow.nodes.slice(0, 100).map((node, nodeIndex) => ({
       id: cleanText(node?.id, 100) || `flow-${flowIndex + 1}-node-${nodeIndex + 1}`,
       type: cleanText(node?.type, 40),
@@ -80,9 +88,13 @@ export function normalizeWorkflowState(input) {
     };
   }).filter(flow => flow.nodes.length);
   if (!flows.length) return createDefaultWorkflowState();
+  if (Number(input.version || 1) < WORKFLOW_SCHEMA_VERSION) {
+    const improvedDefault = createDefaultWorkflowState().flows[0];
+    flows = flows.map(flow => flow.id === improvedDefault.id ? improvedDefault : flow);
+  }
   const requestedActiveId = cleanText(input.activeFlowId, 100);
   return {
-    version: 1,
+    version: WORKFLOW_SCHEMA_VERSION,
     activeFlowId: flows.some(flow => flow.id === requestedActiveId) ? requestedActiveId : flows[0].id,
     flows
   };
@@ -101,7 +113,7 @@ export function validateExecutableWorkflow(flow) {
     incoming.get(edge.to).push(edge);
   }
   const triggers = nodes.filter(node => node.type === 'trigger');
-  if (triggers.length !== 1) errors.push('闲鱼自动回复流程必须且只能有一个平台消息触发器。');
+  if (triggers.length !== 1) errors.push('自动回复流程必须且只能有一个平台消息触发器。');
   if (!nodes.some(node => terminalNodeTypes.has(node.type))) errors.push('流程必须包含回复、转人工或结束节点。');
   for (const node of nodes) {
     if (!executableNodeTypes.has(node.type)) errors.push(`节点「${node.title}」尚未接入安全执行器，不能启用。`);
@@ -130,13 +142,18 @@ export function validateExecutableWorkflow(flow) {
   return { valid: errors.length === 0, errors: [...new Set(errors)] };
 }
 
-export function selectXianyuWorkflow(state) {
+export function selectPlatformWorkflow(state, platform = 'xianyu') {
   const normalized = normalizeWorkflowState(state);
+  const labels = platform === 'douyin' ? ['抖音', '抖店', '飞鸽'] : ['闲鱼'];
   return normalized.flows.find(flow => {
     if (!flow.enabled || !validateExecutableWorkflow(flow).valid) return false;
     const trigger = flow.nodes.find(node => node.type === 'trigger');
-    return ['所有已接入店铺', '闲鱼', ''].includes(cleanText(trigger?.config?.channel));
+    return ['所有已接入店铺', '', ...labels].includes(cleanText(trigger?.config?.channel));
   }) || null;
+}
+
+export function selectXianyuWorkflow(state) {
+  return selectPlatformWorkflow(state, 'xianyu');
 }
 
 function edgeMatches(edge, candidates) {

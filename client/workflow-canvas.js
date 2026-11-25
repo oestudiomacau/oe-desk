@@ -7,6 +7,7 @@
   const GRID_SIZE = 20;
   const MIN_ZOOM = 0.35;
   const MAX_ZOOM = 1.7;
+  const WORKFLOW_SCHEMA_VERSION = 2;
   const EXECUTABLE_NODE_TYPES = new Set(['trigger', 'rag', 'knowledge', 'llm', 'extract', 'condition', 'classifier', 'delay', 'merge', 'variable', 'template', 'custom', 'reply', 'handoff', 'stop']);
   let mountedEditor = null;
 
@@ -19,7 +20,7 @@
       title: '收到平台消息',
       description: '从已接入的店铺接收买家消息。',
       config: [
-        { key: 'channel', label: '触发渠道', type: 'select', options: ['所有已接入店铺', '天猫', '抖音', '闲鱼'] },
+        { key: 'channel', label: '触发渠道', type: 'select', options: ['所有已接入店铺', '天猫', '抖音'], labels: { 天猫: '天猫千牛', 抖音: '飞鸽' } },
         { key: 'event', label: '触发事件', type: 'select', options: ['收到新买家消息', '会话状态变化'] }
       ]
     },
@@ -223,33 +224,61 @@
   }
 
   function defaultFlow() {
-    const trigger = makeNode('trigger', 320, 620);
-    const rag = makeNode('rag', 650, 620);
-    const condition = makeNode('condition', 980, 620);
-    const reply = makeNode('reply', 1320, 470);
-    const handoff = makeNode('handoff', 1320, 780);
+    const trigger = makeNode('trigger', 220, 700);
+    const classifier = makeNode('classifier', 540, 700);
+    const productRag = makeNode('rag', 900, 320);
+    const fitmentRag = makeNode('rag', 900, 580);
+    const afterSalesRag = makeNode('rag', 900, 840);
+    const generalRag = makeNode('rag', 900, 1100);
+    const reply = makeNode('reply', 1320, 700);
     trigger.id = 'default-trigger';
-    rag.id = 'default-rag';
-    condition.id = 'default-condition';
+    classifier.id = 'default-classifier';
+    productRag.id = 'default-product-rag';
+    fitmentRag.id = 'default-fitment-rag';
+    afterSalesRag.id = 'default-after-sales-rag';
+    generalRag.id = 'default-general-rag';
     reply.id = 'default-reply';
-    handoff.id = 'default-handoff';
+    trigger.title = '收到客户消息';
+    trigger.description = '在后台持续接收已接入店铺的新客户消息。';
+    classifier.title = '识别客户意图';
+    classifier.description = '将消息分为商品咨询、车型适配、订单售后或其他问题。';
+    productRag.title = '商品咨询答复';
+    productRag.description = '检索商品资料并直接回答规格、功能、价格等咨询。';
+    productRag.config.prompt = '优先回答客户当前问题；动态价格或库存无法确认时，简洁说明以商品页面为准，不要只回复“转人工”。';
+    fitmentRag.title = '车型适配答复';
+    fitmentRag.description = '结合车型、年份与商品资料回答适配和安装问题。';
+    fitmentRag.config.prompt = '先回答已确认部分；信息不足时主动询问车型、年份、版本或安装规格，给客户明确的下一步，不要只回复“人工核验”。';
+    afterSalesRag.title = '订单售后答复';
+    afterSalesRag.description = '识别订单和售后诉求，提供可执行的补充信息指引。';
+    afterSalesRag.config.prompt = '说明可确认的售后规则；缺少订单信息时请客户提供订单号、问题照片或当前状态，不要编造处理结果。';
+    generalRag.title = '通用问题答复';
+    generalRag.description = '处理未归类问题并生成自然、简洁的客户回复。';
+    generalRag.config.prompt = '直接回应客户问题；资料不足时提出一个最有帮助的补充问题，避免机械重复“请人工核验”。';
+    reply.title = '自动发送回复';
+    reply.description = '将生成结果写入对应会话的安全发送队列。';
+    reply.config.mode = 'AI 全托管队列';
     return {
       id: 'default-customer-reply',
-      name: '客户消息自动处理',
-      description: '对收到的客户消息进行检索、风险判断，并路由至回复或人工队列。',
+      name: 'AI 智能自动回复',
+      description: '收到客户消息后识别意图，按商品、适配、售后或通用咨询检索资料并自动回复。',
       enabled: true,
-      nodes: [trigger, rag, condition, reply, handoff],
+      nodes: [trigger, classifier, productRag, fitmentRag, afterSalesRag, generalRag, reply],
       edges: [
-        { id: 'default-edge-trigger-rag', from: trigger.id, to: rag.id, label: '' },
-        { id: 'default-edge-rag-condition', from: rag.id, to: condition.id, label: '' },
-        { id: 'default-edge-condition-reply', from: condition.id, to: reply.id, label: '低风险' },
-        { id: 'default-edge-condition-handoff', from: condition.id, to: handoff.id, label: '需核对' }
+        { id: 'default-edge-trigger-classifier', from: trigger.id, to: classifier.id, label: '' },
+        { id: 'default-edge-classifier-product', from: classifier.id, to: productRag.id, label: '商品咨询' },
+        { id: 'default-edge-classifier-fitment', from: classifier.id, to: fitmentRag.id, label: '车型适配' },
+        { id: 'default-edge-classifier-after-sales', from: classifier.id, to: afterSalesRag.id, label: '订单售后' },
+        { id: 'default-edge-classifier-general', from: classifier.id, to: generalRag.id, label: '其他' },
+        { id: 'default-edge-product-reply', from: productRag.id, to: reply.id, label: '' },
+        { id: 'default-edge-fitment-reply', from: fitmentRag.id, to: reply.id, label: '' },
+        { id: 'default-edge-after-sales-reply', from: afterSalesRag.id, to: reply.id, label: '' },
+        { id: 'default-edge-general-reply', from: generalRag.id, to: reply.id, label: '' }
       ]
     };
   }
 
   function createInitialState() {
-    return { version: 1, activeFlowId: 'default-customer-reply', flows: [defaultFlow()] };
+    return { version: WORKFLOW_SCHEMA_VERSION, activeFlowId: 'default-customer-reply', flows: [defaultFlow()] };
   }
 
   function normalizeNode(node) {
@@ -268,7 +297,7 @@
 
   function normalizeState(value) {
     if (!value || !Array.isArray(value.flows) || !value.flows.length) return createInitialState();
-    const flows = value.flows.map(flow => {
+    let flows = value.flows.map(flow => {
       const nodes = Array.isArray(flow.nodes) ? flow.nodes.map(normalizeNode).filter(Boolean) : [];
       const validIds = new Set(nodes.map(node => node.id));
       const knownPairs = new Set();
@@ -291,8 +320,12 @@
       };
     }).filter(flow => flow.nodes.length);
     if (!flows.length) return createInitialState();
+    if (Number(value.version || 1) < WORKFLOW_SCHEMA_VERSION) {
+      const improvedDefault = defaultFlow();
+      flows = flows.map(flow => flow.id === improvedDefault.id ? improvedDefault : flow);
+    }
     const activeFlowId = flows.some(flow => flow.id === value.activeFlowId) ? value.activeFlowId : flows[0].id;
-    return { version: 1, activeFlowId, flows };
+    return { version: WORKFLOW_SCHEMA_VERSION, activeFlowId, flows };
   }
 
   class WorkflowCanvas {
@@ -479,7 +512,7 @@
       const groups = groupOrder.map(label => ({ label, types: Object.keys(nodeTypes).filter(type => nodeTypes[type].category === label) }));
       const query = this.nodeQuery.trim().toLowerCase();
       return `<section class="workflow-node-library" aria-label="节点库">
-        <div class="workflow-node-library-title"><span class="section-kicker">NODE LIBRARY</span><b>节点库</b></div>
+        <div class="workflow-node-library-title"><b>节点库</b></div>
         <label class="workflow-node-search"><i data-lucide="search"></i><input type="search" value="${escapeAttr(this.nodeQuery)}" placeholder="搜索节点" data-workflow-node-search></label>
         <div class="workflow-node-catalog">${groups.map(group => {
           const types = group.types.filter(type => {
@@ -520,14 +553,14 @@
       this.root.innerHTML = `
         <section class="workflow-studio" aria-label="可视化工作流编辑器" tabindex="0">
           <aside class="workflow-library">
-            <div class="workflow-library-head"><div><span class="section-kicker">WORKFLOWS</span><h2>工作流</h2></div><button class="icon-btn" type="button" data-workflow-action="new-flow" title="新建工作流"><i data-lucide="plus"></i></button></div>
+            <div class="workflow-library-head"><div><h2>工作流</h2></div><button class="icon-btn" type="button" data-workflow-action="new-flow" title="新建工作流"><i data-lucide="plus"></i></button></div>
             <div class="workflow-list">${this.state.flows.map(item => `<button type="button" class="workflow-list-item ${item.id === flow.id ? 'active' : ''}" data-workflow-flow="${escapeAttr(item.id)}"><span class="workflow-list-icon"><i data-lucide="${item.enabled ? 'play' : 'workflow'}"></i></span><span><b>${escapeHtml(item.name)}</b><small>${item.enabled ? '正在参与自动回复' : '未启用' } · ${item.nodes.length} 个节点</small></span></button>`).join('')}</div>
             ${this.nodeLibraryMarkup()}
             <div class="workflow-library-tip"><i data-lucide="server-cog"></i><span>配置自动同步到本机服务；已启用流程会直接处理新客户消息。</span></div>
           </aside>
           <section class="workflow-editor">
             <header class="workflow-toolbar">
-              <div class="workflow-flow-summary"><span class="section-kicker">VISUAL FLOW</span><strong>${escapeHtml(flow.name)}</strong><span class="status-chip ${flow.enabled ? 'approved' : 'archived'}">${flow.enabled ? '执行中配置' : '未启用'}</span><span class="workflow-runtime-status" data-workflow-runtime-status>等待客户消息</span></div>
+              <div class="workflow-flow-summary"><strong>${escapeHtml(flow.name)}</strong><span class="status-chip ${flow.enabled ? 'approved' : 'archived'}">${flow.enabled ? '执行中配置' : '未启用'}</span><span class="workflow-runtime-status" data-workflow-runtime-status>等待客户消息</span></div>
               <div class="workflow-toolbar-actions"><div class="workflow-history-actions"><button type="button" class="icon-btn" data-workflow-action="undo" title="撤销 Ctrl/⌘+Z" ${this.history.length ? '' : 'disabled'}><i data-lucide="undo-2"></i></button><button type="button" class="icon-btn" data-workflow-action="redo" title="重做 Ctrl/⌘+Shift+Z" ${this.future.length ? '' : 'disabled'}><i data-lucide="redo-2"></i></button></div><button type="button" class="quiet-button" data-workflow-action="layout" title="自动排版"><i data-lucide="git-fork"></i>自动排版</button><button type="button" class="quiet-button ${this.snapToGrid ? 'active' : ''}" data-workflow-action="snap" title="切换网格对齐"><i data-lucide="grid-3x3"></i>对齐</button><button type="button" class="quiet-button" data-workflow-action="validate" title="校验流程"><i data-lucide="shield-check"></i>校验流程</button><button type="button" class="quiet-button" data-workflow-action="fit" title="适应画布"><i data-lucide="scan"></i>适应画布</button><div class="workflow-zoom"><button type="button" class="icon-btn" data-workflow-action="zoom-out" title="缩小"><i data-lucide="minus"></i></button><span data-workflow-zoom>${Math.round(this.view.zoom * 100)}%</span><button type="button" class="icon-btn" data-workflow-action="zoom-in" title="放大"><i data-lucide="plus"></i></button></div></div>
             </header>
             <div class="workflow-node-tools" aria-label="添加节点">
@@ -656,21 +689,25 @@
         const source = flow.nodes.find(item => item.id === edge.from);
         const target = flow.nodes.find(item => item.id === edge.to);
         const canLabel = nodeTypes[source?.type]?.branching === true;
-        this.inspector.innerHTML = `<div class="workflow-inspector-head"><span class="section-kicker">CONNECTION SETTINGS</span><h2>连线设置</h2><p>配置分支名称或删除不需要的连接。</p></div><div class="workflow-edge-summary"><div><i data-lucide="${nodeTypes[source?.type]?.icon || 'circle'}"></i><span>${escapeHtml(source?.title || '起点')}</span></div><i data-lucide="arrow-right"></i><div><i data-lucide="${nodeTypes[target?.type]?.icon || 'circle'}"></i><span>${escapeHtml(target?.title || '终点')}</span></div></div><div class="workflow-form"><label>连线名称<input type="text" value="${escapeAttr(edge.label)}" placeholder="${canLabel ? '例如：商品咨询 / 订单售后' : '可选：为这条连线添加说明'}" data-workflow-edge-field="label"></label>${canLabel ? '<p class="workflow-form-help">分支节点的每条出线应使用不同名称，便于检查路由。</p>' : ''}</div><div class="workflow-inspector-actions"><button type="button" class="quiet-button danger" data-workflow-action="delete-edge">删除连线</button></div>${validation}`;
+        this.inspector.innerHTML = `<div class="workflow-inspector-head"><h2>连线设置</h2><p>配置分支名称或删除不需要的连接。</p></div><div class="workflow-edge-summary"><div><i data-lucide="${nodeTypes[source?.type]?.icon || 'circle'}"></i><span>${escapeHtml(source?.title || '起点')}</span></div><i data-lucide="arrow-right"></i><div><i data-lucide="${nodeTypes[target?.type]?.icon || 'circle'}"></i><span>${escapeHtml(target?.title || '终点')}</span></div></div><div class="workflow-form"><label>连线名称<input type="text" value="${escapeAttr(edge.label)}" placeholder="${canLabel ? '例如：商品咨询 / 订单售后' : '可选：为这条连线添加说明'}" data-workflow-edge-field="label"></label>${canLabel ? '<p class="workflow-form-help">分支节点的每条出线应使用不同名称，便于检查路由。</p>' : ''}</div><div class="workflow-inspector-actions"><button type="button" class="quiet-button danger" data-workflow-action="delete-edge">删除连线</button></div>${validation}`;
       } else if (!node) {
-        this.inspector.innerHTML = `<div class="workflow-inspector-head"><span class="section-kicker">FLOW SETTINGS</span><h2>流程设置</h2><p>配置流程名称和状态，点击画布节点可编辑节点参数。</p></div><div class="workflow-form"><label>流程名称<input type="text" value="${escapeAttr(flow.name)}" data-workflow-flow-field="name"></label><label>流程说明<textarea data-workflow-flow-field="description" placeholder="说明此流程用于处理什么业务场景">${escapeHtml(flow.description)}</textarea></label><label class="workflow-switch"><span><b>启用并执行此流程</b><small>通过校验后会同步到本机服务，并用于处理之后收到的客户消息。</small></span><input type="checkbox" data-workflow-flow-field="enabled" ${flow.enabled ? 'checked' : ''}></label><div class="workflow-inspector-actions"><button type="button" class="quiet-button danger" data-workflow-action="delete-flow" ${this.state.flows.length === 1 ? 'disabled' : ''}>删除流程</button></div></div>${validation}<div class="workflow-inspector-empty"><i data-lucide="mouse-pointer-2"></i><b>选择一个节点</b><span>可编辑名称、说明和节点参数；拖动节点调整画布布局。</span></div>`;
+        this.inspector.innerHTML = `<div class="workflow-inspector-head"><h2>流程设置</h2><p>配置流程名称和状态，点击画布节点可编辑节点参数。</p></div><div class="workflow-form"><label>流程名称<input type="text" value="${escapeAttr(flow.name)}" data-workflow-flow-field="name"></label><label>流程说明<textarea data-workflow-flow-field="description" placeholder="说明此流程用于处理什么业务场景">${escapeHtml(flow.description)}</textarea></label><label class="workflow-switch"><span><b>启用并执行此流程</b><small>通过校验后会同步到本机服务，并用于处理之后收到的客户消息。</small></span><input type="checkbox" data-workflow-flow-field="enabled" ${flow.enabled ? 'checked' : ''}></label><div class="workflow-inspector-actions"><button type="button" class="quiet-button danger" data-workflow-action="delete-flow" ${this.state.flows.length === 1 ? 'disabled' : ''}>删除流程</button></div></div>${validation}<div class="workflow-inspector-empty"><i data-lucide="mouse-pointer-2"></i><b>选择一个节点</b><span>可编辑名称、说明和节点参数；拖动节点调整画布布局。</span></div>`;
       } else {
         const metadata = nodeTypes[node.type];
         const configFields = metadata.config.map(field => {
           const value = node.config[field.key] ?? '';
           let control = `<input type="text" value="${escapeAttr(value)}" placeholder="${escapeAttr(field.placeholder || '')}" data-workflow-node-field="config.${field.key}">`;
-          if (field.type === 'select') control = `<select data-workflow-node-field="config.${field.key}">${field.options.map(option => `<option ${option === value ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}</select>`;
+          if (field.type === 'select') {
+            const options = field.options.map(option => `<option value="${escapeHtml(option)}" ${option === value ? 'selected' : ''}>${escapeHtml(field.labels?.[option] || option)}</option>`);
+            if (field.key === 'channel' && !field.options.includes(value)) options.unshift('<option selected disabled>请选择触发渠道</option>');
+            control = `<select data-workflow-node-field="config.${field.key}">${options.join('')}</select>`;
+          }
           if (field.type === 'textarea') control = `<textarea placeholder="${escapeAttr(field.placeholder || '')}" data-workflow-node-field="config.${field.key}">${escapeHtml(value)}</textarea>`;
           if (field.type === 'number') control = `<input type="number" value="${escapeAttr(value)}" min="${escapeAttr(field.min ?? '')}" max="${escapeAttr(field.max ?? '')}" step="${escapeAttr(field.step ?? 1)}" data-workflow-node-field="config.${field.key}">`;
           if (field.type === 'checkbox') control = `<input type="checkbox" ${value ? 'checked' : ''} data-workflow-node-field="config.${field.key}">`;
           return `<label>${escapeHtml(field.label)}${control}</label>`;
         }).join('');
-        this.inspector.innerHTML = `<div class="workflow-inspector-head"><span class="section-kicker">NODE SETTINGS</span><div class="workflow-node-inspector-title"><span class="workflow-node-icon ${metadata.color}"><i data-lucide="${metadata.icon}"></i></span><div><h2>${metadata.label}</h2><p>修改后会立即保存到本机画布。</p></div></div></div><div class="workflow-form"><label>节点名称<input type="text" value="${escapeAttr(node.title)}" data-workflow-node-field="title"></label><label>节点说明<textarea data-workflow-node-field="description">${escapeHtml(node.description)}</textarea></label>${configFields}</div><div class="workflow-inspector-actions"><button type="button" class="quiet-button ${this.connectSourceId === node.id ? 'active' : ''}" data-workflow-action="connect">${this.connectSourceId === node.id ? '取消连线' : '连接到节点'}</button><button type="button" class="quiet-button danger" data-workflow-action="delete-node">删除节点</button></div><div class="workflow-form-help"><i data-lucide="waypoints"></i>从节点右侧圆点拖到目标左侧圆点，即可直接连线。</div><div class="workflow-node-position"><i data-lucide="crosshair"></i>位置 X ${Math.round(node.x)} · Y ${Math.round(node.y)}</div>${validation}`;
+        this.inspector.innerHTML = `<div class="workflow-inspector-head"><div class="workflow-node-inspector-title"><span class="workflow-node-icon ${metadata.color}"><i data-lucide="${metadata.icon}"></i></span><div><h2>${metadata.label}</h2><p>修改后会立即保存到本机画布。</p></div></div></div><div class="workflow-form"><label>节点名称<input type="text" value="${escapeAttr(node.title)}" data-workflow-node-field="title"></label><label>节点说明<textarea data-workflow-node-field="description">${escapeHtml(node.description)}</textarea></label>${configFields}</div><div class="workflow-inspector-actions"><button type="button" class="quiet-button ${this.connectSourceId === node.id ? 'active' : ''}" data-workflow-action="connect">${this.connectSourceId === node.id ? '取消连线' : '连接到节点'}</button><button type="button" class="quiet-button danger" data-workflow-action="delete-node">删除节点</button></div><div class="workflow-form-help"><i data-lucide="waypoints"></i>从节点右侧圆点拖到目标左侧圆点，即可直接连线。</div><div class="workflow-node-position"><i data-lucide="crosshair"></i>位置 X ${Math.round(node.x)} · Y ${Math.round(node.y)}</div>${validation}`;
       }
       globalThis.lucide?.createIcons?.();
     }

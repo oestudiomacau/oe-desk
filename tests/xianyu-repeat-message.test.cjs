@@ -40,7 +40,7 @@ async function post(url, path, body) {
 }
 
 async function main() {
-  const { coalescePendingXianyuMessages, splitXianyuReplyForDelivery, supersedeQueuedAutoReplies } = await import(pathToFileURL(join(root, 'server', 'xianyu-message-queue.js')).href);
+  const { coalescePendingXianyuMessages, expireStaleXianyuRuntimeWork, splitXianyuReplyForDelivery, supersedeQueuedAutoReplies } = await import(pathToFileURL(join(root, 'server', 'xianyu-message-queue.js')).href);
   const backlog = [
     { id: 'backlog-1', direction: 'in', conversationId: 'buyer-a', status: 'received', createdAtMs: 1000 },
     { id: 'backlog-2', direction: 'in', conversationId: 'buyer-a', status: 'received', createdAtMs: 1001 },
@@ -61,8 +61,27 @@ async function main() {
   assert.equal(queuedReplies[0].delivery, 'superseded');
   assert.equal(autoSource.status, 'superseded');
   assert.equal(queuedReplies[1].delivery, 'queued', 'A human-queued reply must remain under the operator’s control.');
+  const staleMessages = [
+    { id: 'stale-inbound', direction: 'in', conversationId: 'buyer-a', status: 'received' },
+    { id: 'stale-processing', direction: 'in', conversationId: 'buyer-b', status: 'processing' },
+    { id: 'stale-source', direction: 'in', conversationId: 'buyer-c', status: 'auto_queued', replyId: 'stale-auto-reply' }
+  ];
+  const staleReplies = [
+    { id: 'stale-auto-reply', direction: 'out', conversationId: 'buyer-c', origin: 'auto', delivery: 'queued', sourceMessageId: 'stale-source' },
+    { id: 'stale-manual-reply', direction: 'out', conversationId: 'buyer-d', origin: 'manual', delivery: 'queued' },
+    { id: 'uncertain-reply', direction: 'out', conversationId: 'buyer-e', origin: 'auto', delivery: 'verifying' }
+  ];
+  assert.equal(expireStaleXianyuRuntimeWork(staleMessages, staleReplies, 4000), 5);
+  assert.equal(staleMessages[0].status, 'superseded', 'A previous-run inbound backlog must not generate replies after restart.');
+  assert.equal(staleMessages[1].status, 'superseded', 'Interrupted previous-run processing must not resume as a burst.');
+  assert.equal(staleMessages[2].status, 'superseded', 'The source of an expired automatic reply must be closed consistently.');
+  assert.equal(staleReplies[0].delivery, 'superseded', 'A previous-run automatic reply must not be sent later out of context.');
+  assert.equal(staleReplies[1].delivery, 'superseded', 'A previous-run manual queue must not burst-send after restart.');
+  assert.equal(staleReplies[2].delivery, 'verifying', 'An ambiguous send must remain verification-only and must never be resent automatically.');
   assert.deepEqual(splitXianyuReplyForDelivery('第一段###第二段'), ['第一段', '第二段']);
   assert.deepEqual(splitXianyuReplyForDelivery('第一段###第二段###补充'), ['第一段', '第二段\n补充'], 'One AI reply must create exactly two delivery parts.');
+  assert.deepEqual(splitXianyuReplyForDelivery('第一段##第二段'), ['第一段', '第二段'], 'The training editor uses ## as its delivery breakpoint.');
+  assert.deepEqual(splitXianyuReplyForDelivery('第一段##第二段##补充'), ['第一段', '第二段\n补充'], 'Multiple ## markers still create at most two sends.');
 
   const port = await freePort();
   const dataDir = await mkdtemp(join(tmpdir(), 'oe-desk-xianyu-repeat-'));
@@ -81,6 +100,27 @@ async function main() {
       messageKey: 'bridge-message-1'
     });
     assert.equal(first.status, 201);
+
+    const audited = await post(url, '/api/xianyu/messages', {
+      conversationId: 'audit-buyer',
+      text: '你好',
+      messageKey: 'visual:audit-buyer|你好|||12|list:first-style'
+    });
+    assert.equal(audited.status, 201);
+    const readStateReplay = await post(url, '/api/xianyu/messages', {
+      conversationId: 'audit-buyer',
+      text: '你好',
+      messageKey: 'visual:audit-buyer|你好|||12|list:second-style'
+    });
+    assert.equal(readStateReplay.status, 200, 'A background audit changing only the list-style suffix must be idempotent.');
+    assert.equal(readStateReplay.body.duplicate, true);
+    assert.equal(readStateReplay.body.id, audited.body.id);
+    const genuineRepeatPosition = await post(url, '/api/xianyu/messages', {
+      conversationId: 'audit-buyer',
+      text: '你好',
+      messageKey: 'visual:audit-buyer|你好|||13|list:second-message'
+    });
+    assert.equal(genuineRepeatPosition.status, 201, 'A genuinely appended identical bubble has a new rendered position and must remain actionable.');
 
     const crossConversationReply = await post(url, '/api/xianyu/reply', {
       conversationId: 'other-buyer',

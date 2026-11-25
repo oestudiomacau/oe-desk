@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OE DESK 闲鱼 RPA 桥接
 // @namespace    rcb.local
-// @version      0.7.8
+// @version      0.10.3
 // @description  在闲鱼聊天页监听买家消息，调用本地 RAG 工作流并把低风险 AI 回复发送回当前会话。
 // @match        https://www.goofish.com/*
 // @match        https://goofish.com/*
@@ -57,6 +57,19 @@ var OEDeskOutboundRouteGuard = globalThis.OEDeskOutboundRouteGuard || class OEDe
 };
 globalThis.OEDeskOutboundRouteGuard = OEDeskOutboundRouteGuard;
 
+// Opening a hidden conversation changes unread/selected styling. That is an
+// operator-state transition, not a buyer message. Keep this decision separate
+// and testable so background audits cannot replay the latest bubble forever.
+var OEDeskConversationChangeGuard = globalThis.OEDeskConversationChangeGuard || class OEDeskConversationChangeGuard {
+  static looksInbound(entry, previous) {
+    if (!previous) return false;
+    if (entry?.unread && !previous.unread) return true;
+    if (entry?.active) return false;
+    return String(entry?.preview || '') !== String(previous.preview || '');
+  }
+};
+globalThis.OEDeskConversationChangeGuard = OEDeskConversationChangeGuard;
+
 // Electron can execute a page function while the page's own timers are
 // throttled. Coalesce direct pulses, but retain exactly one trailing pass when
 // an inbound mutation arrives during an in-flight scan.
@@ -100,10 +113,76 @@ var OEDeskScanScheduler = globalThis.OEDeskScanScheduler || class OEDeskScanSche
 };
 globalThis.OEDeskScanScheduler = OEDeskScanScheduler;
 
+// Goofish virtualizes the message pane and can recycle DOM nodes. Compare the
+// rendered message sequence instead of treating a node/position as permanent
+// identity. The longest suffix-prefix overlap identifies newly appended
+// bubbles when the oldest rendered rows slide out of the viewport.
+var OEDeskMessageSequenceState = globalThis.OEDeskMessageSequenceState || class OEDeskMessageSequenceState {
+  constructor() { this.snapshots = new Map(); }
+  prime(conversationId, tokens) {
+    this.snapshots.set(String(conversationId || ''), [...(tokens || [])].map(String));
+  }
+  diff(conversationId, tokens, { forceLatest = false } = {}) {
+    const id = String(conversationId || '');
+    const current = [...(tokens || [])].map(String);
+    const hasPrevious = this.snapshots.has(id);
+    const previous = this.snapshots.get(id) || [];
+    this.snapshots.set(id, current);
+    if (!hasPrevious || !current.length) return [];
+    if (forceLatest) return [current.length - 1];
+    let overlap = Math.min(previous.length, current.length);
+    while (overlap > 0) {
+      let matches = true;
+      for (let index = 0; index < overlap; index += 1) {
+        if (previous[previous.length - overlap + index] !== current[index]) { matches = false; break; }
+      }
+      if (matches) break;
+      overlap -= 1;
+    }
+    if (!overlap) return [current.length - 1];
+    return Array.from({ length: current.length - overlap }, (_value, index) => overlap + index);
+  }
+  reset() { this.snapshots.clear(); }
+};
+globalThis.OEDeskMessageSequenceState = OEDeskMessageSequenceState;
+
+// Delivery confirmation must distinguish this send from an older bubble with
+// identical text. Keep a pre-send fingerprint baseline; a React repaint with
+// the same bubbles is not success, while a new platform ID/timestamp or a
+// genuinely appended exact bubble is.
+var OEDeskOutboundBubbleState = globalThis.OEDeskOutboundBubbleState || class OEDeskOutboundBubbleState {
+  static normalizeText(value) { return String(value || '').replace(/\s+/g, ' ').trim(); }
+  static fingerprint(entry, index) {
+    const id = String(entry?.id || '').trim();
+    if (id) return `id:${id}`;
+    const stamp = String(entry?.stamp || '').trim();
+    const sequence = String(entry?.sequence || '').trim();
+    if (stamp || sequence) return `meta:${stamp}|${sequence}`;
+    return `fallback:${this.normalizeText(entry?.text)}|${Number.isInteger(entry?.position) ? entry.position : index}`;
+  }
+  static capture(entries, targetText) {
+    const target = this.normalizeText(targetText);
+    const exact = (Array.isArray(entries) ? entries : []).filter(entry => this.normalizeText(entry?.text) === target);
+    return {
+      count: exact.length,
+      fingerprints: exact.map((entry, index) => this.fingerprint(entry, index)),
+      strongFingerprints: exact.map((entry, index) => this.fingerprint(entry, index)).filter(value => !value.startsWith('fallback:'))
+    };
+  }
+  static hasNewExactBubble(baseline, entries, targetText) {
+    const before = baseline && typeof baseline === 'object' ? baseline : { count: 0, fingerprints: [], strongFingerprints: [] };
+    const current = this.capture(entries, targetText);
+    if (current.count > Number(before.count || 0)) return true;
+    const priorStrong = new Set(Array.isArray(before.strongFingerprints) ? before.strongFingerprints : (before.fingerprints || []).filter(value => !String(value).startsWith('fallback:')));
+    return current.strongFingerprints.some(value => !priorStrong.has(value));
+  }
+};
+globalThis.OEDeskOutboundBubbleState = OEDeskOutboundBubbleState;
+
 if (typeof document !== 'undefined') (function () {
   'use strict';
 
-  const bridgeVersion = '0.7.8';
+  const bridgeVersion = '0.10.3';
 
   // Electron may reinject after SPA navigation or a watchdog tick. Keep a
   // single observer/heartbeat set per document so reinjection is idempotent.
@@ -116,6 +195,7 @@ if (typeof document !== 'undefined') (function () {
   const sessionId = `xy-rpa-${Math.random().toString(36).slice(2)}-${Date.now()}`;
   const seen = new Map();
   const attemptedOutbox = new Set();
+  const pendingOutboxAcks = new Map();
   let outboxCursor = 0;
   let listening = false;
   let scanBusy = false;
@@ -123,6 +203,7 @@ if (typeof document !== 'undefined') (function () {
   let lastScanAt = 0;
   const scanScheduler = new OEDeskScanScheduler();
   const scanState = new OEDeskConversationScanState();
+  const messageSequences = new OEDeskMessageSequenceState();
   let currentConversationId = '';
   let conversationListPrimed = false;
   let conversationListBusy = false;
@@ -147,8 +228,24 @@ if (typeof document !== 'undefined') (function () {
   let lastForwardError = '';
   let lastHeartbeatStartedAt = 0;
   let heartbeatBusy = false;
+  let lastHeartbeatSucceededAt = 0;
+  let lastOutboxActivityAt = 0;
+  let lastComposerRecoveryAt = 0;
   let lastSuccessfulScanAt = 0;
   let scanRecoveryCount = 0;
+  let operatorVisible = true;
+  let lastBackgroundAuditAt = 0;
+  let backgroundAuditCursor = 0;
+  let backgroundAuditCount = 0;
+  let duplicateForwardCount = 0;
+  let socketConnected = false;
+  let lastSocketFrameAt = 0;
+  let lastSocketEventAt = 0;
+  let socketWakeCount = 0;
+  let urgentSocketAuditUntil = 0;
+  const socketInboundHints = new Map();
+  let lastOutboxBlockReason = '';
+  let lastOutboxBlockAt = 0;
   let lastCandidateStats = { raw: 0, unique: 0, outgoing: 0, invisible: 0, selected: 0 };
 
   const bridge = document.createElement('div');
@@ -216,8 +313,11 @@ if (typeof document !== 'undefined') (function () {
     return (hash >>> 0).toString(36);
   }
 
-  function conversationRowIsActive(row) {
-    for (let cursor = row; cursor && cursor !== document.body; cursor = cursor.parentElement) {
+  function conversationRowIsActive(row, root = null) {
+    for (let cursor = row, depth = 0; cursor && cursor !== document.body && depth < 6; cursor = cursor.parentElement, depth += 1) {
+      // The list/root itself may carry an `active` class for the whole panel.
+      // It describes the workspace, not an individual buyer row.
+      if (root && cursor === root) break;
       if (cursor.getAttribute?.('aria-selected') === 'true') return true;
       const ariaCurrent = cursor.getAttribute?.('aria-current');
       if (ariaCurrent && ariaCurrent !== 'false') return true;
@@ -339,7 +439,7 @@ if (typeof document !== 'undefined') (function () {
         const unread = conversationHasUnread(row);
         const id = conversationRowId(row, label);
         seenRows.add(row);
-        rows.push({ id, row, label: label.slice(0, 220), preview, unread, active: conversationRowIsActive(row), signature: `${rowText}\n${unread ? 'unread' : 'read'}` });
+        rows.push({ id, row, label: label.slice(0, 220), preview, unread, active: conversationRowIsActive(row, root), signature: `${rowText}\n${unread ? 'unread' : 'read'}` });
       }
     }
     return rows;
@@ -517,6 +617,23 @@ if (typeof document !== 'undefined') (function () {
     return `${conversationId}|${text}|${stamp}|${sequence}|${Number.isInteger(position) ? position : ''}`;
   }
 
+  function noteOutboxBlock(reason = '') {
+    lastOutboxBlockReason = String(reason || '').slice(0, 120);
+    lastOutboxBlockAt = Date.now();
+  }
+
+  function messageSequenceToken(node, text) {
+    const explicit = ['data-message-id', 'data-msg-id', 'data-messageid', 'data-id', 'data-key', 'data-message-key', 'data-item-key']
+      .map(attribute => node.getAttribute(attribute) || node.closest?.(`[${attribute}]`)?.getAttribute(attribute) || '')
+      .find(Boolean) || '';
+    if (explicit) return `id:${explicit}`;
+    const stamp = node.querySelector('time, [datetime], [class*="time"], [class*="Time"]')?.getAttribute('datetime') || node.querySelector('time')?.textContent || '';
+    const sequence = ['data-index', 'data-seq', 'data-sequence', 'aria-posinset', 'data-timestamp']
+      .map(attribute => node.getAttribute(attribute) || node.closest?.(`[${attribute}]`)?.getAttribute(attribute) || '')
+      .find(Boolean) || '';
+    return `text:${text}|stamp:${stamp}|sequence:${sequence}`;
+  }
+
   function messageSender(node) {
     return node.getAttribute('data-sender') || node.querySelector('[class*="name"], [class*="nick"], [class*="sender"]')?.textContent?.trim() || '闲鱼客户';
   }
@@ -528,31 +645,42 @@ if (typeof document !== 'undefined') (function () {
     return key;
   }
 
-  async function forwardBuyerMessage(node, conversationId) {
+  async function forwardBuyerMessage(node, conversationId, keyOverride = '', options = {}) {
     const text = visibleText(node);
     if (!text) return false;
-    const key = stableMessageKey(node, text, conversationId);
-    if (seen.has(key)) return false;
-    rememberMessage(node, text, conversationId);
+    const stableKey = stableMessageKey(node, text, conversationId);
+    const key = keyOverride || stableKey;
+    const allowStableRepeat = options.allowStableRepeat === true && key === stableKey;
+    if (seen.has(key) && !allowStableRepeat) return false;
+    // List signatures are wake metadata, not message identity. Once the same
+    // rendered bubble has been forwarded, read/selected-state changes cannot
+    // submit it again under a different `|list:` suffix. Sequence-diff scans
+    // may explicitly allow a genuinely appended identical bubble.
+    if (key !== stableKey && seen.has(stableKey) && !options.externalId) return false;
+    seen.set(key, Date.now());
     try {
-      await call('/messages', {
+      const result = await call('/messages', {
         method: 'POST',
         body: JSON.stringify({
           text,
           sender: messageSender(node),
           conversationId,
           messageKey: key,
-          externalId: node.getAttribute('data-message-id') || node.getAttribute('data-msg-id') || '',
+          externalId: String(options.externalId || node.getAttribute('data-message-id') || node.getAttribute('data-msg-id') || ''),
           sessionId,
           pageUrl: location.href
         })
       });
-      forwardedCount += 1;
+      if (result?.duplicate) duplicateForwardCount += 1;
+      else forwardedCount += 1;
+      seen.set(stableKey, Date.now());
+      if (seen.size > 3000) seen.delete(seen.keys().next().value);
       lastForwardError = '';
       return true;
     } catch (error) {
       // Permit a later retry when the local service was temporarily unavailable.
       seen.delete(key);
+      seen.delete(stableKey);
       lastForwardError = error.message || '消息上报失败';
       return false;
     }
@@ -564,6 +692,7 @@ if (typeof document !== 'undefined') (function () {
     try {
       const conversationId = updateConversationId();
       const nodes = messageNodes();
+      const tokens = nodes.map(node => messageSequenceToken(node, visibleText(node)));
       scanCount += 1;
       if (!nodes.length) {
         // Goofish briefly renders an empty pane before hydrating chat history.
@@ -582,13 +711,17 @@ if (typeof document !== 'undefined') (function () {
           const nodeConversationId = conversationId;
           rememberMessage(node, text, nodeConversationId);
         });
+        messageSequences.prime(conversationId, tokens);
         scanState.prime(conversationId);
         bridge.textContent = `OE DESK 监听中 · ${conversationId.slice(0, 24)} · 已建立消息基线`;
         return;
       }
-      for (const node of nodes) {
+      const newIndexes = messageSequences.diff(conversationId, tokens);
+      for (const index of newIndexes) {
+        const node = nodes[index];
+        if (!node) continue;
         const nodeConversationId = conversationId;
-        await forwardBuyerMessage(node, nodeConversationId);
+        await forwardBuyerMessage(node, nodeConversationId, '', { allowStableRepeat: true });
       }
       bridge.textContent = lastForwardError ? `OE DESK 上报失败 · ${lastForwardError.slice(0, 42)}` : `OE DESK 监听中 · ${conversationId.slice(0, 24)} · 已扫描 ${scanCount} · 已同步 ${forwardedCount}`;
     } catch (error) { bridge.textContent = `OE DESK 桥接异常：${error.message}`; }
@@ -596,59 +729,112 @@ if (typeof document !== 'undefined') (function () {
   }
 
   function conversationChangeLooksInbound(entry, previous) {
-    if (!previous) return false;
-    if (entry.unread && !previous.unread) return true;
     // A seller reply also changes the active row preview. The message pane
     // already handles that conversation, so reopening it here makes the page
     // jump during automatic sending. Only non-active rows are list triggers.
     if (entry.active || entry.id === currentConversationId) return false;
-    return entry.preview !== previous.preview || entry.signature !== previous.signature;
+    return OEDeskConversationChangeGuard.looksInbound(entry, previous);
   }
 
-  function queueConversationOpen(entry, previous) {
-    if (pendingConversationIds.has(entry.id)) return;
+  function socketHintKey(hint = {}) {
+    return `${hint.messageId || ''}|${hint.chatId || ''}|${hint.senderId || ''}|${OEDeskOutboundBubbleState.normalizeText(hint.text || '')}`;
+  }
+
+  function rememberSocketInboundHints(hints = []) {
+    const now = Date.now();
+    for (const hint of Array.isArray(hints) ? hints : []) {
+      const text = OEDeskOutboundBubbleState.normalizeText(hint?.text || '').slice(0, 500);
+      if (!text) continue;
+      const normalized = {
+        messageId: String(hint.messageId || '').slice(0, 240),
+        chatId: String(hint.chatId || '').slice(0, 240),
+        senderId: String(hint.senderId || '').slice(0, 240),
+        receiverId: String(hint.receiverId || '').slice(0, 240),
+        text,
+        receivedAt: now
+      };
+      socketInboundHints.set(socketHintKey(normalized), normalized);
+    }
+    for (const [key, hint] of socketInboundHints) if (now - Number(hint.receivedAt || 0) > 30000) socketInboundHints.delete(key);
+  }
+
+  function queueSocketHintConversations(entries) {
+    for (const hint of socketInboundHints.values()) {
+      const text = OEDeskOutboundBubbleState.normalizeText(hint.text);
+      let candidates = entries.filter(entry => {
+        const preview = OEDeskOutboundBubbleState.normalizeText(entry.preview);
+        return preview && (preview.includes(text) || text.includes(preview));
+      });
+      if (hint.chatId) {
+        const byChatId = entries.filter(entry => String(entry.id || '').includes(hint.chatId));
+        if (byChatId.length === 1) candidates = byChatId;
+      }
+      if (candidates.length > 1) {
+        const unread = candidates.filter(entry => entry.unread);
+        if (unread.length === 1) candidates = unread;
+      }
+      if (candidates.length === 1) queueConversationOpen(candidates[0], conversationSnapshots.get(candidates[0].id), hint);
+    }
+  }
+
+  function queueConversationOpen(entry, previous, hint = null) {
+    if (pendingConversationIds.has(entry.id)) {
+      const pending = pendingConversationOpens.find(candidate => candidate.entry.id === entry.id);
+      if (pending && hint) pending.hint = hint;
+      return;
+    }
     pendingConversationIds.add(entry.id);
-    pendingConversationOpens.push({ entry, previous });
+    pendingConversationOpens.push({ entry, previous, hint });
   }
 
-  async function waitForConversation(entry, timeoutMs = 2600) {
+  async function waitForConversation(entry, timeoutMs = 2600, options = {}) {
+    const requireComposer = options.requireComposer === true;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const current = conversationRows().find(candidate => candidate.id === entry.id);
-      if (current?.active) return current;
+      if (current?.active && (!requireComposer || findComposer())) return current;
       await new Promise(resolve => setTimeout(resolve, 120));
     }
-    return conversationRows().find(candidate => candidate.id === entry.id && candidate.active) || null;
+    const current = conversationRows().find(candidate => candidate.id === entry.id && candidate.active) || null;
+    return current && (!requireComposer || findComposer()) ? current : null;
   }
 
   // List updates and outbox delivery can request navigation at the same time.
   // Serialize those requests so two async scans cannot make the page bounce
   // between buyers.
-  async function openConversation(entry) {
-    const task = conversationNavigation.then(() => performOpenConversation(entry), () => performOpenConversation(entry));
+  async function openConversation(entry, options = {}) {
+    const task = conversationNavigation.then(() => performOpenConversation(entry, options), () => performOpenConversation(entry, options));
     conversationNavigation = task.catch(() => {});
     return task;
   }
 
-  async function performOpenConversation(entry) {
+  async function performOpenConversation(entry, options = {}) {
     if (!entry?.row?.isConnected) return false;
-    if (conversationRowIsActive(entry.row)) return true;
+    const force = options.force === true;
+    const requireComposer = options.requireComposer === true;
+    if (conversationRowIsActive(entry.row) && !force) return true;
     const elapsed = Date.now() - lastConversationOpenAt;
     if (elapsed < 1200) await new Promise(resolve => setTimeout(resolve, 1200 - elapsed));
     lastConversationOpenAt = Date.now();
     bridge.textContent = `OE DESK 发现新消息 · 正在打开 ${entry.label.slice(0, 18)}`;
     try { entry.row.click(); } catch { /* Try Electron's trusted input next. */ }
-    let opened = await waitForConversation(entry, 800);
+    let opened = await waitForConversation(entry, 800, { requireComposer });
     if (opened) return true;
     // Electron's BrowserView can issue a trusted pointer sequence when the
     // platform ignores synthetic DOM clicks. Browser users retain the regular
     // click path above.
     await nativeClickFallback(entry.row);
-    opened = await waitForConversation(entry, 2600);
+    opened = await waitForConversation(entry, 2600, { requireComposer });
     return Boolean(opened);
   }
 
-  async function captureLatestConversationMessage(entry) {
+  function nodeExternalMessageId(node) {
+    return ['data-message-id', 'data-msg-id', 'data-messageid', 'data-id', 'data-message-key']
+      .map(attribute => node?.getAttribute?.(attribute) || node?.closest?.(`[${attribute}]`)?.getAttribute(attribute) || '')
+      .find(Boolean) || '';
+  }
+
+  async function captureLatestConversationMessage(entry, hint = null) {
     const deadline = Date.now() + 3000;
     let nodes = messageNodes();
     while (!nodes.length && Date.now() < deadline) {
@@ -661,20 +847,60 @@ if (typeof document !== 'undefined') (function () {
     }
     // The list preview tells us the conversation changed. Only post its last
     // buyer bubble, then baseline the older history so it cannot be replayed.
-    const preview = String(entry.preview || '').replace(/\s+/g, ' ').trim();
+    const preview = OEDeskOutboundBubbleState.normalizeText(hint?.text || entry.preview || '');
     const candidates = nodes.filter(node => {
       const text = visibleText(node);
       return preview && text && (preview.includes(text) || text.includes(preview));
     });
-    const latest = (candidates.length ? candidates : nodes).at(-1);
-    const sent = await forwardBuyerMessage(latest, entry.id);
+    let eligible = candidates;
+    if (hint?.messageId && candidates.some(node => nodeExternalMessageId(node))) {
+      eligible = candidates.filter(node => nodeExternalMessageId(node) === hint.messageId);
+    }
+    if (hint && !eligible.length) {
+      lastForwardError = 'WebSocket 已通知新消息，等待聊天气泡完成渲染';
+      return false;
+    }
+    const latest = (eligible.length ? eligible : nodes).at(-1);
+    const tokens = nodes.map(node => messageSequenceToken(node, visibleText(node)));
+    messageSequences.diff(entry.id, tokens, { forceLatest: true });
+    const latestText = visibleText(latest);
+    const latestStableKey = stableMessageKey(latest, latestText, entry.id);
+    if (hint?.messageId && !nodeExternalMessageId(latest) && seen.has(latestStableKey)) return false;
+    // Read/unread styling changes whenever a background audit opens the row.
+    // Bind list-trigger identity to the preview content only, so that state
+    // transition cannot manufacture a new message key.
+    const listEventKey = hint?.messageId
+      ? `${entry.id}|socket:${hint.messageId}`
+      : `${latestStableKey}|list:${hashText(entry.preview || '')}`;
+    const sent = await forwardBuyerMessage(latest, entry.id, listEventKey, { externalId: hint?.messageId || '' });
     for (const node of nodes) {
       if (node === latest) continue;
       const text = visibleText(node);
       if (text) rememberMessage(node, text, entry.id);
     }
     scanState.prime(entry.id);
+    if (sent && hint) socketInboundHints.delete(socketHintKey(hint));
     return sent;
+  }
+
+  async function auditBackgroundConversation(entries) {
+    if (operatorVisible || outboxBusy || pendingOutboxAcks.size || pendingConversationOpens.length) return false;
+    // A WebSocket frame is a stronger new-message signal than the unreliable
+    // unread badge. During that short window rotate through hidden
+    // conversations quickly; ordinary idle audits stay deliberately slow.
+    const auditInterval = Date.now() < urgentSocketAuditUntil ? 450 : 3500;
+    if (Date.now() - lastBackgroundAuditAt < auditInterval) return false;
+    const targets = entries.filter(entry => !entry.active);
+    if (!targets.length) return false;
+    const target = targets[backgroundAuditCursor % targets.length];
+    backgroundAuditCursor += 1;
+    lastBackgroundAuditAt = Date.now();
+    if (!(await openConversation(target))) {
+      lastForwardError = `后台核验无法打开会话：${target.label.slice(0, 24)}`;
+      return false;
+    }
+    backgroundAuditCount += 1;
+    return true;
   }
 
   async function drainPendingConversations() {
@@ -688,7 +914,8 @@ if (typeof document !== 'undefined') (function () {
       lastForwardError = `无法打开会话：${current.label.slice(0, 24)}`;
       return;
     }
-    await captureLatestConversationMessage(current);
+    const captured = await captureLatestConversationMessage(current, pending.hint || null);
+    if (!captured && pending.hint) socketInboundHints.set(socketHintKey(pending.hint), pending.hint);
   }
 
   async function scanConversationList() {
@@ -699,6 +926,7 @@ if (typeof document !== 'undefined') (function () {
       refreshConversationMutationObserver();
       const entries = conversationRows();
       if (!entries.length) return;
+      queueSocketHintConversations(entries);
       if (!conversationListPrimed) {
         entries.forEach(entry => conversationSnapshots.set(entry.id, { signature: entry.signature, preview: entry.preview, unread: entry.unread }));
         conversationListPrimed = true;
@@ -707,6 +935,7 @@ if (typeof document !== 'undefined') (function () {
         // compare. Open it now instead of waiting for another buyer event.
         entries.filter(entry => entry.unread).forEach(entry => queueConversationOpen(entry, null));
         await drainPendingConversations();
+        await auditBackgroundConversation(entries);
         return;
       }
       for (const entry of entries) {
@@ -718,7 +947,9 @@ if (typeof document !== 'undefined') (function () {
         const visibleIds = new Set(entries.map(entry => entry.id));
         for (const id of conversationSnapshots.keys()) if (!visibleIds.has(id)) conversationSnapshots.delete(id);
       }
+      const hadPendingConversation = pendingConversationOpens.length > 0;
       await drainPendingConversations();
+      if (!hadPendingConversation) await auditBackgroundConversation(entries);
     } finally { conversationListBusy = false; }
   }
 
@@ -824,15 +1055,6 @@ if (typeof document !== 'undefined') (function () {
     return String(input?.isContentEditable ? input.textContent || '' : input?.value || '').replace(/\u200b/g, '').trim();
   }
 
-  async function waitForComposerClear(input, timeoutMs = 500) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      if (!composerText(input)) return true;
-      await new Promise(resolve => setTimeout(resolve, 180));
-    }
-    return !composerText(input);
-  }
-
   async function nativeEnterFallback(conversationId = '', expectedInput = null) {
     // Synthetic keyboard events have isTrusted=false and are ignored by some
     // Goofish React builds. Electron exposes a narrowly-scoped native input
@@ -857,9 +1079,14 @@ if (typeof document !== 'undefined') (function () {
 
   async function replaceComposerWithNativeText(input, text) {
     input?.focus?.();
-    // Select the current draft before asking Chromium to insert trusted text.
-    // The input event keeps React's controlled state aligned with the DOM.
-    try { document.execCommand('selectAll'); } catch { /* Selection is best effort. */ }
+    if (typeof globalThis.rcbPlatformSendInput === 'function') {
+      try {
+        await globalThis.rcbPlatformSendInput({ type: 'keyDown', keyCode: 'A', modifiers: ['control'] });
+        await globalThis.rcbPlatformSendInput({ type: 'keyUp', keyCode: 'A', modifiers: ['control'] });
+      } catch { return false; }
+    } else {
+      try { document.execCommand('selectAll'); } catch { /* Browser userscript fallback. */ }
+    }
     const inserted = await nativeInsertText(text);
     if (!inserted) return false;
     input?.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: String(text) }));
@@ -883,28 +1110,278 @@ if (typeof document !== 'undefined') (function () {
   }
 
   async function releaseOutboxClaim(item, reason) {
-    attemptedOutbox.delete(item.id);
-    await call('/outbox/release', {
+    const released = await call('/outbox/release', {
       method: 'POST',
       body: JSON.stringify({ id: item.id, sessionId, conversationId: item.conversationId, reason })
     }).catch(() => null);
+    if (!released) {
+      attemptedOutbox.add(item.id);
+      pendingOutboxAcks.set(item.id, { ...item, pendingAction: 'release', releaseReason: reason });
+      return false;
+    }
+    attemptedOutbox.delete(item.id);
+    pendingOutboxAcks.delete(item.id);
+    lastOutboxActivityAt = Date.now();
+    return true;
   }
 
-  function holdClaimedOutbox(item, message) {
+  function queuePendingOutboxAck(item, message, { verify = false, baseline = null, evidence = null } = {}) {
     attemptedOutbox.add(item.id);
+    pendingOutboxAcks.set(item.id, {
+      ...item,
+      deliveryBaseline: baseline || item.deliveryBaseline || null,
+      deliveryEvidence: evidence || item.deliveryEvidence || null,
+      pendingAction: verify ? 'verify' : 'ack'
+    });
     bridge.textContent = message;
+  }
+
+  async function acknowledgeOutbox(item, evidence = item.deliveryEvidence || {}) {
+    const acknowledged = await call('/outbox/ack', {
+      method: 'POST',
+      body: JSON.stringify({ id: item.id, sessionId, conversationId: item.conversationId, claimToken: item.claimToken || '', evidence })
+    }).catch(() => null);
+    if (!acknowledged) return false;
+    await finishPlatformDeliveryAttempt(item).catch(() => null);
+    attemptedOutbox.delete(item.id);
+    pendingOutboxAcks.delete(item.id);
+    lastOutboxActivityAt = Date.now();
+    return true;
+  }
+
+  function outgoingBubbleEntries(text) {
+    const target = OEDeskOutboundBubbleState.normalizeText(text);
+    if (!target) return [];
+    const selectors = '[data-message-id], [data-msg-id], [data-messageid], [data-testid*="message"], .msg-item, .message-item, .chat-message, .im-message, [class*="MessageItem"], [class*="messageItem"], [class*="message-text-right"], [class*="message-content-text"], [class*="text-content-"]';
+    const nodes = [...new Set(document.querySelectorAll(selectors))].filter(node => {
+      if (!isOutgoing(node) || OEDeskOutboundBubbleState.normalizeText(visibleText(node)) !== target) return false;
+      const concrete = node.querySelector?.('[class*="message-text-right"], [class*="message-content-text"], [class*="text-content-"]');
+      return !concrete || concrete === node || OEDeskOutboundBubbleState.normalizeText(visibleText(concrete)) !== target;
+    });
+    return nodes.map((node, position) => ({
+      text: target,
+      id: ['data-message-id', 'data-msg-id', 'data-messageid', 'data-id', 'data-key', 'data-message-key']
+        .map(attribute => node.getAttribute?.(attribute) || node.closest?.(`[${attribute}]`)?.getAttribute(attribute) || '')
+        .find(Boolean) || '',
+      stamp: node.querySelector?.('time, [datetime], [class*="time"], [class*="Time"]')?.getAttribute?.('datetime')
+        || node.querySelector?.('time')?.textContent || '',
+      sequence: ['data-index', 'data-seq', 'data-sequence', 'aria-posinset', 'data-timestamp']
+        .map(attribute => node.getAttribute?.(attribute) || node.closest?.(`[${attribute}]`)?.getAttribute(attribute) || '')
+        .find(Boolean) || '',
+      position
+    }));
+  }
+
+  async function observeHumanReply(event) {
+    if (!event.isTrusted || outboxBusy) return;
+    const active = activeConversationEntry();
+    const input = active && composerForActiveConversation(active.id);
+    if (!input) return;
+    const click = event.type === 'click' && findSendButton(input)?.contains(event.target);
+    const enter = event.type === 'keydown' && input.contains(event.target) && event.key === 'Enter'
+      && !event.shiftKey && !event.isComposing && !event.repeat;
+    if (!click && !enter) return;
+    const text = composerText(input);
+    const source = messageNodes().at(-1);
+    if (!text || !source) return;
+    const sourceId = stableMessageKey(source, visibleText(source), active.id);
+    const startedAt = Date.now();
+    const previous = new Set(outgoingBubbleEntries(text).map(item => item.id));
+    try {
+      const config = await call('/config');
+      if (config.replyMode !== 'self_learning') return;
+      await heartbeat();
+      if (activeConversationEntry()?.id !== active.id) return;
+      await forwardBuyerMessage(source, active.id);
+      while (Date.now() - startedAt < 10000) {
+        await new Promise(resolve => setTimeout(resolve, 220));
+        if (activeConversationEntry()?.id !== active.id) return;
+        const sent = outgoingBubbleEntries(text).find(item => item.id && !previous.has(item.id));
+        if (!sent) continue;
+        await call('/human-reply', { method: 'POST', body: JSON.stringify({ sessionId, conversationId: active.id,
+          sourceId, replyId: sent.id, text, startedAt }) });
+        return;
+      }
+    } catch (error) { console.warn('[xianyu-bridge] human reply:', error.message); }
+  }
+  document.addEventListener('click', observeHumanReply, true);
+  document.addEventListener('keydown', observeHumanReply, true);
+
+  function captureOutgoingBubbleBaseline(conversationId, text) {
+    return OEDeskOutboundBubbleState.capture(outgoingBubbleEntries(text), text);
+  }
+
+  function hasNewOutgoingBubble(conversationId, text, baseline) {
+    if (!composerForActiveConversation(conversationId)) return false;
+    return OEDeskOutboundBubbleState.hasNewExactBubble(baseline, outgoingBubbleEntries(text), text);
+  }
+
+  async function prepareComposerForFastWorkSend(input, conversationId, text) {
+    if (!input || !composerForActiveConversation(conversationId, input)) return false;
+    // FastWork's sender uses trusted browser input first. Synthetic React
+    // events are retained only for normal browser userscript mode where the
+    // Electron native input bridge is unavailable.
+    if (typeof globalThis.rcbPlatformSendInput === 'function') {
+      const inserted = await replaceComposerWithNativeText(input, text);
+      if (inserted && composerText(input) === String(text || '').trim()) return true;
+    }
+    setInputValue(input, text);
+    return composerText(input) === String(text || '').trim();
+  }
+
+  async function dispatchFastWorkSend(input, conversationId, text) {
+    if (!input || !composerForActiveConversation(conversationId, input)) return false;
+    if (typeof globalThis.rcbPlatformSendInput === 'function') {
+      // FastWork's trusted sender prefers the real button pointer sequence.
+      // Goofish accepts the click even when a synthetic DOM event is ignored.
+      const clicked = await nativeClickFallback(findSendButton(input), conversationId, input);
+      if (clicked) return true;
+      return nativeEnterFallback(conversationId, input);
+    }
+    const send = findSendButton(input);
+    if (send) {
+      send.focus?.();
+      if (!composerForActiveConversation(conversationId, input)) return false;
+      try {
+        send.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+        send.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+      } catch { /* Browser userscript mode may not expose MouseEvent. */ }
+      send.click();
+      return true;
+    }
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    return true;
+  }
+
+  async function beginPlatformDeliveryAttempt(item) {
+    if (typeof globalThis.rcbPlatformBeginDeliveryAttempt !== 'function') return { trackingActive: false, requestObserved: false, platformAck: false };
+    return globalThis.rcbPlatformBeginDeliveryAttempt({ claimToken: item.claimToken, conversationId: item.conversationId, textHash: hashText(item.text) });
+  }
+
+  async function queryPlatformDeliveryEvidence(item) {
+    if (typeof globalThis.rcbPlatformDeliveryEvidence !== 'function') return { trackingActive: false, requestObserved: false, platformAck: false };
+    return globalThis.rcbPlatformDeliveryEvidence({ claimToken: item.claimToken, conversationId: item.conversationId });
+  }
+
+  async function finishPlatformDeliveryAttempt(item) {
+    if (typeof globalThis.rcbPlatformFinishDeliveryAttempt !== 'function') return null;
+    return globalThis.rcbPlatformFinishDeliveryAttempt({ claimToken: item.claimToken, conversationId: item.conversationId });
+  }
+
+  function mergeDeliveryEvidence(item, platform = {}, domBubble = false) {
+    const previous = item.deliveryEvidence && typeof item.deliveryEvidence === 'object' ? item.deliveryEvidence : {};
+    return {
+      requestObserved: previous.requestObserved === true || platform.requestObserved === true,
+      requestObservedAt: Number(platform.requestObservedAt || previous.requestObservedAt || 0) || null,
+      platformMid: String(platform.platformMid || previous.platformMid || ''),
+      platformCode: platform.platformCode !== null && platform.platformCode !== undefined
+        ? platform.platformCode
+        : (previous.platformCode ?? null),
+      platformAck: previous.platformAck === true || platform.platformAck === true,
+      platformAckAt: Number(platform.platformAckAt || previous.platformAckAt || 0) || null,
+      platformRejected: previous.platformRejected === true || platform.platformRejected === true,
+      domBubble: previous.domBubble === true || domBubble === true,
+      domConversationId: previous.domConversationId || (domBubble ? item.conversationId : ''),
+      domVerifiedAt: Number(previous.domVerifiedAt || (domBubble ? Date.now() : 0)) || null
+    };
+  }
+
+  function deliveryEvidenceComplete(item, evidence) {
+    return Boolean(evidence?.requestObserved && evidence.platformAck && evidence.platformMid
+      && Number(evidence.platformCode) === 200 && !evidence.platformRejected
+      && evidence.domBubble && evidence.domConversationId === item.conversationId);
+  }
+
+  async function persistDeliveryVerification(item, baseline, evidence) {
+    return call('/outbox/verify', {
+      method: 'POST',
+      body: JSON.stringify({ id: item.id, sessionId, conversationId: item.conversationId, claimToken: item.claimToken || '', baseline, evidence })
+    }).catch(() => null);
+  }
+
+  async function renewOutboxClaim(item) {
+    return call('/outbox/renew', {
+      method: 'POST',
+      body: JSON.stringify({ id: item.id, sessionId, conversationId: item.conversationId, claimToken: item.claimToken || '' })
+    }).catch(() => null);
+  }
+
+  async function waitForDeliveryEvidence(item, baseline, timeoutMs = 2200) {
+    const deadline = Date.now() + timeoutMs;
+    let evidence = mergeDeliveryEvidence(item, {}, false);
+    while (Date.now() < deadline) {
+      const platform = await queryPlatformDeliveryEvidence(item).catch(() => ({ trackingActive: false }));
+      const domBubble = hasNewOutgoingBubble(item.conversationId, item.text, baseline);
+      evidence = mergeDeliveryEvidence({ ...item, deliveryEvidence: evidence }, platform, domBubble);
+      if (deliveryEvidenceComplete(item, evidence) || evidence.platformRejected) break;
+      await new Promise(resolve => setTimeout(resolve, 140));
+    }
+    return evidence;
+  }
+
+  async function retryPendingOutboxAcks() {
+    for (const item of pendingOutboxAcks.values()) {
+      if (item.pendingAction === 'release') {
+        await releaseOutboxClaim(item, item.releaseReason || 'composer-not-cleared');
+        continue;
+      }
+      if (item.pendingAction === 'ack') {
+        await acknowledgeOutbox(item, item.deliveryEvidence || {});
+        continue;
+      }
+      if (!(await renewOutboxClaim(item))) continue;
+      if (item.pendingAction === 'verify') {
+        const active = activeConversationEntry();
+        if (!active || active.id !== item.conversationId) {
+          const target = conversationRows().find(row => row.id === item.conversationId);
+          // Verification is best effort and must never head-of-line block a
+          // newer customer reply. Only navigate in background; the operator's
+          // visible conversation remains untouched.
+          if (target && !operatorVisible) await openConversation(target);
+          continue;
+        }
+        const baseline = item.deliveryBaseline || { count: 0, fingerprints: [] };
+        const platform = await queryPlatformDeliveryEvidence(item).catch(() => ({}));
+        const domBubble = hasNewOutgoingBubble(item.conversationId, item.text, baseline);
+        const evidence = mergeDeliveryEvidence(item, platform, domBubble);
+        const verified = await persistDeliveryVerification(item, baseline, evidence);
+        if (!verified) continue;
+        item.deliveryEvidence = verified.deliveryEvidence || evidence;
+        item.deliveryBaseline = verified.deliveryBaseline || baseline;
+        if (!deliveryEvidenceComplete(item, item.deliveryEvidence)) {
+          const input = composerForActiveConversation(item.conversationId);
+          if (input && composerText(input) === String(item.text || '').trim()
+            && !item.deliveryEvidence.requestObserved && !item.deliveryEvidence.domBubble) {
+            await finishPlatformDeliveryAttempt(item).catch(() => null);
+            await releaseOutboxClaim(item, 'verified-unsent-draft-intact');
+            continue;
+          }
+          bridge.textContent = item.deliveryEvidence.platformRejected
+            ? '平台拒绝发送 · 请人工检查内容'
+            : '发送动作已完成 · 正在等待平台与气泡双重确认';
+          continue;
+        }
+      }
+      await acknowledgeOutbox(item, item.deliveryEvidence || {});
+    }
+    return true;
   }
 
   async function flushOutbox() {
     if (!listening || outboxBusy) return;
     outboxBusy = true;
     try {
+      if (!(await retryPendingOutboxAcks())) {
+        bridge.textContent = 'AI 回复已发送 · 正在恢复本地确认';
+        return;
+      }
       // Do not advance a cursor past a reply for another conversation. The
       // current page may switch while the model is generating, so inspect all
       // undelivered work and route to its exact conversation before claiming.
       const result = await call(`/outbox?since=0&sessionId=${encodeURIComponent(sessionId)}`);
       const pending = (result.messages || []).filter(item => !attemptedOutbox.has(item.id));
-      if (!pending.length) return;
+      if (!pending.length) { lastOutboxBlockReason = ''; return; }
       const active = activeConversationEntry();
       let item = active ? pending.find(entry => entry.conversationId === active.id) : null;
       if (!item) {
@@ -915,16 +1392,31 @@ if (typeof document !== 'undefined') (function () {
         const target = routable?.target;
         item = routable?.entry;
         if (!target) {
+          noteOutboxBlock('target-row-unavailable');
           bridge.textContent = '已生成回复，等待对应闲鱼会话加载';
           return;
         }
+        noteOutboxBlock(operatorVisible ? 'target-not-uniquely-active-while-visible' : 'opening-target-conversation');
         await openConversation(target);
         return;
       }
       let input = composerForActiveConversation(item.conversationId);
-      if (!input) { bridge.textContent = '已生成回复，等待闲鱼聊天输入框'; return; }
+      if (!input) {
+        noteOutboxBlock('active-composer-unavailable');
+        bridge.textContent = '已生成回复，正在恢复闲鱼聊天输入框';
+        // Goofish can leave a row selected while unmounting its message pane.
+        // Re-activate only the already unique target row, then require the
+        // composer to exist before a later pulse may claim or send anything.
+        const target = conversationRows().find(row => row.id === item.conversationId && row.active);
+        if (target && Date.now() - lastComposerRecoveryAt >= 1500) {
+          lastComposerRecoveryAt = Date.now();
+          await openConversation(target, { force: true, requireComposer: true });
+        }
+        return;
+      }
       const claimed = await call('/outbox/claim', { method: 'POST', body: JSON.stringify({ id: item.id, sessionId, conversationId: item.conversationId }) }).catch(() => null);
-      if (!claimed) return;
+      if (!claimed) { noteOutboxBlock('claim-rejected'); return; }
+      lastOutboxActivityAt = Date.now();
       // Re-read the active DOM row after every async boundary. The cached
       // conversation ID can be stale while Goofish swaps virtualized rows.
       input = composerForActiveConversation(claimed.conversationId);
@@ -933,83 +1425,86 @@ if (typeof document !== 'undefined') (function () {
         bridge.textContent = '会话已切换，回复将等待目标会话恢复';
         return;
       }
-      setInputValue(input, claimed.text);
+      if (claimed.delivery === 'verifying') {
+        queuePendingOutboxAck(claimed, '发现未完成发送记录 · 正在继续双重核验', {
+          verify: true,
+          baseline: claimed.deliveryBaseline || { count: 0, fingerprints: [] },
+          evidence: claimed.deliveryEvidence || {}
+        });
+        return;
+      }
+      const deliveryBaseline = captureOutgoingBubbleBaseline(claimed.conversationId, claimed.text);
+      if (!(await prepareComposerForFastWorkSend(input, claimed.conversationId, claimed.text))) {
+        await releaseOutboxClaim(claimed, 'composer-rejected-text');
+        bridge.textContent = '闲鱼输入框未接受回复内容 · 已加入安全重试';
+        return;
+      }
       input = composerForActiveConversation(claimed.conversationId, input);
       if (!input) {
         await releaseOutboxClaim(claimed, 'route-lost-before-send');
         bridge.textContent = '会话已切换，未发送回复将等待目标会话恢复';
         return;
       }
-      const send = findSendButton(input);
-      if (send) {
+      const platformStart = await beginPlatformDeliveryAttempt(claimed).catch(() => ({ trackingActive: false }));
+      const verifying = await persistDeliveryVerification(claimed, deliveryBaseline, mergeDeliveryEvidence(claimed, platformStart, false));
+      if (!verifying) {
+        await finishPlatformDeliveryAttempt(claimed).catch(() => null);
+        await releaseOutboxClaim(claimed, 'verification-state-unavailable');
+        bridge.textContent = '本地发送核验未就绪 · 暂不发送并自动重试';
+        return;
+      }
+      input = composerForActiveConversation(claimed.conversationId, input);
+      const readyToSend = () => call('/outbox/ready', { method: 'POST', body: JSON.stringify({
+        id: claimed.id, sessionId, conversationId: claimed.conversationId, claimToken: claimed.claimToken
+      }) }).then(result => result.ready === true).catch(() => false);
+      if (!input || !await readyToSend() || !(await dispatchFastWorkSend(input, claimed.conversationId, claimed.text))) {
+        await releaseOutboxClaim(claimed, 'send-control-unavailable');
+        bridge.textContent = '闲鱼发送控件未就绪 · 已加入安全重试';
+        return;
+      }
+      let evidence = await waitForDeliveryEvidence(verifying, deliveryBaseline, 1200);
+      input = composerForActiveConversation(claimed.conversationId, input);
+      if (!evidence.requestObserved && !evidence.domBubble && input && composerText(input)) {
+        await replaceComposerWithNativeText(input, claimed.text);
         input = composerForActiveConversation(claimed.conversationId, input);
-        if (!input) {
-          await releaseOutboxClaim(claimed, 'route-lost-before-click');
-          bridge.textContent = '会话已切换，未发送回复将等待目标会话恢复';
+        if (input && await readyToSend()) {
+          input.focus?.();
+          await nativeEnterFallback(claimed.conversationId, input);
+          evidence = await waitForDeliveryEvidence({ ...verifying, deliveryEvidence: evidence }, deliveryBaseline, 2200);
+        }
+      }
+      input = composerForActiveConversation(claimed.conversationId, input);
+      if (!evidence.requestObserved && !evidence.domBubble && input && composerText(input) && await readyToSend()) {
+        await nativeClickFallback(findSendButton(input), claimed.conversationId, input);
+        evidence = await waitForDeliveryEvidence({ ...verifying, deliveryEvidence: evidence }, deliveryBaseline, 2200);
+      }
+      const persisted = await persistDeliveryVerification(verifying, deliveryBaseline, evidence);
+      const finalEvidence = persisted?.deliveryEvidence || evidence;
+      if (deliveryEvidenceComplete(verifying, finalEvidence)) {
+        if (!(await acknowledgeOutbox(verifying, finalEvidence))) {
+          queuePendingOutboxAck({ ...verifying, deliveryEvidence: finalEvidence }, '双重确认完成 · 正在恢复本地记录', { evidence: finalEvidence });
           return;
         }
-        send.focus?.();
-        if (!composerForActiveConversation(claimed.conversationId, input)) {
-          await releaseOutboxClaim(claimed, 'route-lost-before-click');
-          bridge.textContent = '会话已切换，未发送回复将等待目标会话恢复';
-          return;
-        }
-        try {
-          send.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-          send.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-        } catch { /* WebView may not expose MouseEvent. */ }
-        send.click();
       } else {
         input = composerForActiveConversation(claimed.conversationId, input);
-        if (!input) {
-          await releaseOutboxClaim(claimed, 'route-lost-before-enter');
-          bridge.textContent = '会话已切换，未发送回复将等待目标会话恢复';
+        if (!finalEvidence.requestObserved && !finalEvidence.domBubble && input && composerText(input) === String(claimed.text || '').trim()) {
+          await finishPlatformDeliveryAttempt(claimed).catch(() => null);
+          await releaseOutboxClaim(verifying, 'composer-intact-no-platform-request');
+          bridge.textContent = '平台未收到发送请求 · 已加入安全重试';
           return;
         }
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-        input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-      }
-      let sent = await waitForComposerClear(input);
-      if (!sent) {
-        input = composerForActiveConversation(claimed.conversationId, input);
-        if (!input) {
-          holdClaimedOutbox(claimed, '发送状态未确认，已停止自动重试');
-          return;
-        }
-        if (composerText(input)) await replaceComposerWithNativeText(input, claimed.text);
-        input = composerForActiveConversation(claimed.conversationId, input);
-        if (!input) {
-          holdClaimedOutbox(claimed, '发送状态未确认，已停止自动重试');
-          return;
-        }
-        input.focus?.();
-        await nativeEnterFallback(claimed.conversationId, input);
-        sent = await waitForComposerClear(input, 2200);
-      }
-      if (!sent) {
-        input = composerForActiveConversation(claimed.conversationId, input);
-        if (!input) {
-          holdClaimedOutbox(claimed, '发送状态未确认，已停止自动重试');
-          return;
-        }
-        await nativeClickFallback(findSendButton(input), claimed.conversationId, input);
-        sent = await waitForComposerClear(input, 2200);
-      }
-      if (!sent) {
-        holdClaimedOutbox(claimed, '发送状态未确认，已停止自动重试');
+        queuePendingOutboxAck({ ...verifying, deliveryEvidence: finalEvidence }, finalEvidence.platformRejected
+          ? '平台拒绝发送 · 请人工检查内容'
+          : '发送动作已完成 · 正在等待平台与气泡双重确认', {
+          verify: true,
+          baseline: deliveryBaseline,
+          evidence: finalEvidence
+        });
         return;
       }
-      if (!composerForActiveConversation(claimed.conversationId)) {
-        holdClaimedOutbox(claimed, '发送状态未确认，已停止自动重试');
-        return;
-      }
-      const acknowledged = await call('/outbox/ack', { method: 'POST', body: JSON.stringify({ id: claimed.id, sessionId, conversationId: claimed.conversationId, pageUrl: location.href }) }).catch(() => null);
-      if (!acknowledged) {
-        holdClaimedOutbox(claimed, '发送状态未确认，已停止自动重试');
-        return;
-      }
+      lastOutboxBlockReason = '';
       outboxCursor = Math.max(outboxCursor, Number(claimed.createdAtMs || 0));
-      bridge.textContent = '已发送 AI 回复';
+      bridge.textContent = '平台响应与发送气泡均已确认 · AI 回复已发送';
     } catch (error) { bridge.textContent = `OE DESK 桥接异常：${error.message}`; }
     finally { outboxBusy = false; }
   }
@@ -1034,12 +1529,20 @@ if (typeof document !== 'undefined') (function () {
         || messageNodes().length > 0
       );
       const candidateCount = listening ? messageNodes().length : 0;
-      const result = await call('/listener', { method: 'POST', body: JSON.stringify({ connected: authenticated, sessionId, conversationId: updateConversationId(), pageUrl: location.href, chatUrl: location.href, diagnostics: { bridgeVersion, scanCount, forwardedCount, lastForwardError, candidateCount, candidateStats: lastCandidateStats, conversationCount: conversationRows().length, authenticated, lastSuccessfulScanAt, scanRecoveryCount } }) });
+      const rows = conversationRows();
+      const activeConversationIds = [...new Set(rows.filter(entry => entry.active).map(entry => entry.id))];
+      const activeConversationDetails = rows.filter(entry => entry.active).map(entry => {
+        const rect = entry.row?.getBoundingClientRect?.();
+        return { id: entry.id, tag: entry.row?.tagName || '', role: entry.row?.getAttribute?.('role') || '', ariaSelected: entry.row?.getAttribute?.('aria-selected') || '', ariaCurrent: entry.row?.getAttribute?.('aria-current') || '', x: Math.round(rect?.x || 0), y: Math.round(rect?.y || 0), width: Math.round(rect?.width || 0), height: Math.round(rect?.height || 0) };
+      });
+      const result = await call('/listener', { method: 'POST', body: JSON.stringify({ connected: authenticated, sessionId, conversationId: updateConversationId(), pageUrl: location.href, chatUrl: location.href, diagnostics: { bridgeVersion, scanCount, forwardedCount, duplicateForwardCount, lastForwardError, candidateCount, candidateStats: lastCandidateStats, conversationCount: rows.length, activeConversationIds, activeConversationDetails, composerAvailable: Boolean(findComposer()), authenticated, lastSuccessfulScanAt, scanRecoveryCount, backgroundAuditCount, operatorVisible, socketConnected, lastSocketFrameAt, lastSocketEventAt, socketWakeCount, lastOutboxBlockReason, lastOutboxBlockAt } }) });
+      lastHeartbeatSucceededAt = Date.now();
       const nextListening = authenticated && Boolean(result.listening);
       const started = nextListening && !listening;
       listening = nextListening;
       if (started) {
         scanState.reset();
+        messageSequences.reset();
         conversationListPrimed = false;
         conversationSnapshots.clear();
         pendingConversationOpens.length = 0;
@@ -1056,10 +1559,40 @@ if (typeof document !== 'undefined') (function () {
   // The Electron host can invoke this pulse when Chromium throttles page
   // timers while the embedded view is backgrounded.
   globalThis.__rcbXianyuBridgeHeartbeat = heartbeat;
-  globalThis.__rcbXianyuBridgePulse = () => {
+  globalThis.__rcbXianyuBridgeHealth = () => ({
+    bridgeVersion,
+    listening,
+    scanCount,
+    lastSuccessfulScanAt,
+    lastHeartbeatSucceededAt,
+    lastOutboxActivityAt,
+    pendingAcknowledgements: pendingOutboxAcks.size,
+    scanBusy,
+    outboxBusy,
+    socketConnected,
+    lastSocketFrameAt,
+    lastSocketEventAt,
+    socketWakeCount
+  });
+  globalThis.__rcbXianyuBridgePulse = (state = {}) => {
+    if (Object.prototype.hasOwnProperty.call(state, 'operatorVisible')) operatorVisible = state.operatorVisible === true;
+    if (Object.prototype.hasOwnProperty.call(state, 'connected')) socketConnected = state.connected === true;
+    if (Number(state.lastFrameAt || 0) > lastSocketFrameAt) lastSocketFrameAt = Number(state.lastFrameAt);
     requestPlatformScan('electron-host');
     flushOutbox();
     if (Date.now() - lastHeartbeatStartedAt > 2500) heartbeat();
+  };
+  // Electron observes the authenticated page's real WebSocket and supplies a
+  // bounded message ID/chat/text hint. The rendered page still proves inbound
+  // direction and the exact conversation before anything reaches the server.
+  globalThis.__rcbXianyuBridgeSocketEvent = (event = {}) => {
+    socketConnected = event.connected !== false;
+    lastSocketFrameAt = Math.max(lastSocketFrameAt, Number(event.lastFrameAt || event.at || Date.now()));
+    lastSocketEventAt = Date.now();
+    urgentSocketAuditUntil = lastSocketEventAt + 7000;
+    socketWakeCount += 1;
+    rememberSocketInboundHints(event.inboundHints || []);
+    requestPlatformScan('websocket-frame');
   };
   heartbeat();
   setInterval(heartbeat, 2000);

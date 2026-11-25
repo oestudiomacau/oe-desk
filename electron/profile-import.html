@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>OE DESK · 导入私有资料</title>
+<style>
+  body { margin: 0; background: #f7f9f7; color: #17251e; font: 13px system-ui, sans-serif; }
+  main { padding: 24px; }
+  h1 { margin: 0; font-size: 18px; }
+  p { line-height: 1.65; color: #46564d; }
+  label { display: block; font-weight: 600; }
+  input, button { font: inherit; }
+  input { box-sizing: border-box; width: 100%; margin-top: 6px; padding: 9px; border: 1px solid #a6b3aa; border-radius: 6px; }
+  nav { display: flex; justify-content: flex-end; gap: 8px; }
+  button { padding: 7px 12px; border: 1px solid #a6b3aa; border-radius: 6px; background: white; }
+  button[type="submit"] { background: #216e51; border-color: #216e51; color: white; }
+  #message { min-height: 2em; margin: 6px 0; color: #8a391e; }
+</style>
+<main>
+  <h1>导入知识库和模型配置</h1>
+  <p>输入随附的安装密码，导入已有知识、客服问答和 API Key。</p>
+  <form>
+    <label>安装密码<input id="password" type="password" autocomplete="off" maxlength="24" required autofocus></label>
+    <p id="message" role="status"></p>
+    <nav><button type="button" id="skip">空白启动</button><button type="submit">导入并打开</button></nav>
+  </form>
+</main>
+<script>
+  const field = document.querySelector('#password');
+  const message = document.querySelector('#message');
+  const controls = Array.from(document.querySelectorAll('input, button'));
+  document.querySelector('#skip').addEventListener('click', () => window.close());
+  document.querySelector('form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const password = field.value.trim();
+    if (!/^[0-9a-f]{24}$/.test(password)) { message.textContent = '请输入完整的 24 位安装密码。'; return; }
+    controls.forEach(control => { control.disabled = true; });
+    message.textContent = '正在导入…';
+    try {
+      const result = await window.oeProfile.unlock(password);
+      if (result.ok) return;
+      message.textContent = result.error;
+    } catch {
+      message.textContent = '导入失败，请关闭窗口后重试。';
+    }
+    controls.forEach(control => { control.disabled = false; });
+    field.select();
+  });
+</script>
+</html>

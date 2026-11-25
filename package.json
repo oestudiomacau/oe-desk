@@ -1,15 +1,16 @@
 {
   "name": "rcb-rag-customer-service",
   "productName": "OE DESK",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check server/workflow-engine.js && node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/platform-preload.cjs && node --check rpa/xianyu-bridge.user.js && node --check client/workflow-canvas.js",
+    "check": "node --check server.js && node --check server/customer-reply.js && node --check server/workflow-engine.js && node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/platform-preload.cjs && node --check rpa/xianyu-bridge.user.js && node --check rpa/feige-bridge.user.js && node --check client/workflow-canvas.js",
     "electron": "electron electron/main.cjs"
   },
   "dependencies": {
+    "undici": "^6.29.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
